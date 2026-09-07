@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_GRID, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, ROAD_TILE, ROAD_TILES_PER_EDGE, SIDEWALK, STREET } from './config';
+import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_BANDS, LOT_COLS, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, ROAD_TILE, ROAD_TILES_PER_EDGE, SIDEWALK, STREET } from './config';
 import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
 import { BRIDGE_KERB, BRIDGE_SLAB, BRIDGE_TOP, cityProps, LAMP_HEAD, PILLAR_TOP, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
@@ -390,7 +390,8 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
   const trees: { x: number; z: number; s: number; kind: NatureKind }[] = [];
   const plants: { x: number; z: number; s: number; yaw: number; kind: NatureKind }[] = [];
   const lamps: { x: number; z: number; yaw: number }[] = [];
-  const lotCars: { x: number; z: number; half: number; n: number; yaw: number }[] = [];
+  // halfA runs along a bay row, halfB across the bands.
+  const lotCars: { x: number; z: number; halfA: number; halfB: number; yaw: number }[] = [];
   const farBoxes: any[] = [];
 
   let ground: THREE.BufferGeometry | null = null;
@@ -836,17 +837,30 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         flat(geos.lotPole, mats.pole, px, heightAt(px, cz) + 3.5, cz, 0, true);
         flat(geos.lotHead, mats.bulb, px, heightAt(px, cz) + 6.9, cz);
       }
-      lotCars.push({ x: cx, z: cz, half, n: 8 + Math.floor(rnd() * 6), yaw: rnd() < 0.5 ? 0 : Math.PI / 2 });
+      lotCars.push({ x: cx, z: cz, halfA: half, halfB: half, yaw: rnd() < 0.5 ? 0 : Math.PI / 2 });
     } else {
       const mw = inner * 0.86, md = inner * 0.5, mh = 9 + rnd() * 4;
       const side = rnd() < 0.5 ? -1 : 1;
       const mz = cz + side * (half - md / 2);
       const mg = buildingGeo(mw, mh, md);
       trash.push(mg);
-      const mesh = new THREE.Mesh(mg, mats.mallWall);
+      // A single material left the roof the same beige as the walls, so from any
+      // rise the store read as a blank cardboard box.
+      const mesh = new THREE.Mesh(mg, [mats.mallWall, mats.mallWall, mats.roof, mats.roof, mats.mallWall, mats.mallWall]);
       mesh.position.set(cx, heightAt(cx, mz) + SLAB_TOP + mh / 2, mz);
       mesh.castShadow = true; mesh.receiveShadow = true;
       group.add(mesh);
+      // Roof plant, so the biggest silhouette in the block has something on top.
+      const roofY = heightAt(cx, mz) + SLAB_TOP + mh;
+      for (let k = 0; k < 7; k++) {
+        const uw = 2.2 + rnd() * 3.4, ud = 2 + rnd() * 2.8, uh = 1 + rnd() * 1.4;
+        const ug = new THREE.BoxGeometry(uw, uh, ud);
+        trash.push(ug);
+        const unit = new THREE.Mesh(ug, mats.pole);
+        unit.position.set(cx + (rnd() * 2 - 1) * (mw / 2 - 6), roofY + uh / 2, mz + (rnd() * 2 - 1) * (md / 2 - 5));
+        unit.castShadow = true;
+        group.add(unit);
+      }
       const bandG = new THREE.BoxGeometry(mw + 0.4, 1.6, md + 0.4);
       trash.push(bandG);
       const band = new THREE.Mesh(bandG, mats.mallBand);
@@ -860,7 +874,8 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       group.add(glass);
       flat(geos.mallSign, mats.sign, cx, heightAt(cx, mz) + SLAB_TOP + mh + 1.1, mz);
       boxes.push({ pos: [cx, heightAt(cx, mz) + SLAB_TOP + mh / 2, mz], half: [mw / 2, mh / 2, md / 2] });
-      lotCars.push({ x: cx, z: cz - side * half * 0.45, half: half * 0.75, n: 5 + Math.floor(rnd() * 4), yaw: 0 });
+      // The store eats the `side` half of the block; park only on the apron left over.
+      lotCars.push({ x: cx, z: cz - side * (md / 2), halfA: half * 0.92, halfB: half - md / 2, yaw: 0 });
     }
   } else if (type !== 'canal' && type !== 'highway') {
     if (!far) flat(geos.curb, mats.curb, cx, hc - 0.23, cz);
@@ -922,86 +937,95 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       hBase *= 1 + dens * 0.5;
       const layout = rnd();
 
-      const addB = (x: number, z: number, w: number, d: number, h: number) => {
+      const pickKind = (): BuildingKind => {
+        if (type === 'tower') return TOWER_KINDS[Math.floor(rnd() * TOWER_KINDS.length)];
+        if (type === 'low') return HOUSE_KINDS[Math.floor(rnd() * HOUSE_KINDS.length)];
+        return MID_KINDS[Math.floor(rnd() * MID_KINDS.length)];
+      };
+      /** Footprint of a model, or a stand-in while the catalog is still loading. */
+      const sizeOf = (kind: BuildingKind) => {
+        const catalog = cityBuildings();
+        return catalog ? catalog[kind].size : { w: 14, d: 12, h: 10 };
+      };
+
+      // `fit` scales the model uniformly and `yaw` turns its front to the street.
+      const place = (kind: BuildingKind, x: number, z: number, yaw: number, fit: number, h: number) => {
         const gy = heightAt(x, z);
         const catalog = cityBuildings();
-        let kind: BuildingKind;
-        if (type === 'tower') kind = TOWER_KINDS[Math.floor(rnd() * TOWER_KINDS.length)];
-        else if (type === 'low') kind = HOUSE_KINDS[Math.floor(rnd() * HOUSE_KINDS.length)];
-        else kind = MID_KINDS[Math.floor(rnd() * MID_KINDS.length)];
-
+        const size = sizeOf(kind);
+        const sy = Math.max(fit * 0.8, Math.min(fit * 2.2, h / size.h));
+        const bw = size.w * fit, bd = size.d * fit, bh = size.h * sy;
+        // Frontage runs along X on the north and south fronts, along Z on the sides.
+        const alongX = Math.abs(Math.cos(yaw)) > 0.5;
+        const hx = (alongX ? bw : bd) / 2;
+        const hz = (alongX ? bd : bw) / 2;
+        // Consume the same choices at every LOD so approaching a chunk never
+        // regenerates a different set of buildings.
+        const farColor = PALETTE[Math.floor(rnd() * PALETTE.length)];
+        boxes.push({ pos: [x, gy + SLAB_TOP + bh / 2, z], half: [hx, bh / 2, hz] });
+        if (far) {
+          farBoxes.push({ w: hx * 2, h: bh, d: hz * 2, x, y: gy + SLAB_TOP + bh / 2, z, color: farColor });
+          return;
+        }
         if (catalog) {
-          const b = catalog[kind];
-          const fit = Math.min(w / b.size.w, d / b.size.d);
-          const sx = fit;
-          const sz = fit;
-          // Tie the height scale to the footprint scale or a big lot gets a
-          // building stretched wide and left squat.
-          const sy = Math.max(fit * 0.75, Math.min(fit * 2, h / b.size.h));
-          const bw = b.size.w * sx;
-          const bh = b.size.h * sy;
-          const bd = b.size.d * sz;
-          // Consume the same choices at every LOD so approaching a chunk never
-          // regenerates a different set of buildings.
-          const yaw = rnd() < 0.5 ? 0 : Math.PI;
-          const farColor = PALETTE[Math.floor(rnd() * PALETTE.length)];
-          boxes.push({ pos: [x, gy + SLAB_TOP + bh / 2, z], half: [bw / 2, bh / 2, bd / 2] });
-          if (far) {
-            farBoxes.push({ w: bw, h: bh, d: bd, x, y: gy + SLAB_TOP + bh / 2, z, color: farColor });
-            return;
-          }
-          const mesh = new THREE.Mesh(b.geometry, b.material);
+          const mesh = new THREE.Mesh(catalog[kind].geometry, catalog[kind].material);
           mesh.position.set(x, gy + SLAB_TOP, z);
-          mesh.scale.set(sx, sy, sz);
+          mesh.scale.set(fit, sy, fit);
           mesh.rotation.y = yaw;
           mesh.castShadow = true;
           mesh.receiveShadow = true;
           group.add(mesh);
           return;
         }
-
-        const y = gy + SLAB_TOP + (h + 2.5) / 2;
-        boxes.push({ pos: [x, y, z], half: [w / 2, h / 2 + 1.25, d / 2] });
-        if (far) {
-          farBoxes.push({ w, h: h + 2.5, d, x, y, z, color: PALETTE[Math.floor(rnd() * PALETTE.length)] });
-          return;
-        }
-        const geo = buildingGeo(w, h + 2.5, d);
+        const geo = buildingGeo(hx * 2, bh, hz * 2);
         trash.push(geo);
         const side = mats.facades[Math.floor(rnd() * mats.facades.length)];
         const mesh = new THREE.Mesh(geo, [side, side, mats.roof, mats.roof, side, side]);
-        mesh.position.set(x, y, z);
+        mesh.position.set(x, gy + SLAB_TOP + bh / 2, z);
         mesh.castShadow = true; mesh.receiveShadow = true;
         group.add(mesh);
       };
 
-      // The block is carved into lots and each one gets its own building, so a
-      // block reads as a row of neighbours instead of one object in a field.
-      // Towers keep bigger lots; low-rise packs them tighter.
-      const grid = type === 'tower'
-        ? 2 + Math.floor(rnd() * 2)
-        : LOT_GRID[Math.floor(layout * LOT_GRID.length)] + (type === 'low' ? 1 : 0);
-      const lot = inner / grid;
-      // An odd grid has a lot that touches no street. Leave it as a courtyard.
-      const yard = grid % 2 === 1 ? (grid - 1) / 2 : -1;
-      for (let a = 0; a < grid; a++) {
-        for (let b = 0; b < grid; b++) {
-          const x = cx - inner / 2 + lot * (a + 0.5);
-          const z = cz - inner / 2 + lot * (b + 0.5);
-          if (a === yard && b === yard) {
-            for (let k = 0; k < 3; k++) {
-              const tx = x + (rnd() * 2 - 1) * lot * 0.3;
-              const tz = z + (rnd() * 2 - 1) * lot * 0.3;
-              if (!onDriveable(seed, tx, tz, 4.2)) {
-                trees.push({ x: tx, z: tz, s: 0.7 + rnd() * 0.3, kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)] });
-              }
-            }
-            continue;
+      // Buildings line the four street fronts at their own size, shoulder to
+      // shoulder, and the middle of the block stays a courtyard. Carving the
+      // block into a grid of lots and blowing one model up to fill each one
+      // gave oversized houses adrift in beige aprons.
+      const rim = inner / 2;
+      const corner = 3 + layout * 5;
+      const run = inner - corner * 2;
+      const spread = type === 'tower' ? 1.45 : 1;
+      let deepest = 0;
+      for (let e = 0; e < 4; e++) {
+        let cursor = -run / 2;
+        for (let guard = 0; guard < 20; guard++) {
+          const kind = pickKind();
+          const size = sizeOf(kind);
+          const fit = spread * (0.9 + rnd() * 0.4);
+          const bw = size.w * fit;
+          if (cursor + bw > run / 2) break;
+          const off = cursor + bw / 2;
+          cursor += bw + 0.5 + rnd() * 2.2;
+          // An empty plot here and there keeps a block from looking stamped out.
+          if (rnd() < 0.08) continue;
+          const bd = size.d * fit;
+          deepest = Math.max(deepest, bd);
+          const set = rim - bd / 2;
+          const yaw = e === 0 ? 0 : e === 1 ? Math.PI : e === 2 ? Math.PI / 2 : -Math.PI / 2;
+          const x = e < 2 ? cx + off : cx + (e === 2 ? -set : set);
+          const z = e < 2 ? cz + (e === 0 ? -set : set) : cz + off;
+          place(kind, x, z, yaw, fit, hBase * (0.6 + rnd() * 0.85));
+        }
+      }
+
+      // Whatever the fronts did not eat becomes a planted courtyard.
+      const yardHalf = rim - deepest - 3;
+      if (yardHalf > 7) {
+        for (let k = 0; k < Math.floor(yardHalf / 3); k++) {
+          const tx = cx + (rnd() * 2 - 1) * yardHalf;
+          const tz = cz + (rnd() * 2 - 1) * yardHalf;
+          if (!onDriveable(seed, tx, tz, 4.2)) {
+            trees.push({ x: tx, z: tz, s: 0.7 + rnd() * 0.3, kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)] });
           }
-          // A gap here and there keeps a block from looking stamped out.
-          if (grid > 2 && rnd() < 0.12) continue;
-          const gap = 1.5 + rnd() * 1.5;
-          addB(x, z, lot - gap, lot - gap, hBase * (0.55 + rnd() * 0.9));
         }
       }
       // Street trees along one kerb of the block.
@@ -1063,9 +1087,10 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       for (const kind of Object.keys(place) as RoadKind[]) {
         const list = place[kind];
         if (!list.length) continue;
-        const inst = new THREE.InstancedMesh(tiles[kind].geometry, tiles[kind].material, list.length);
-        list.forEach((m, k) => inst.setMatrixAt(k, m));
-        inst.receiveShadow = true;
+          const inst = new THREE.InstancedMesh(tiles[kind].geometry, tiles[kind].material, list.length);
+            inst.name = `roadTile:${kind}`;
+            list.forEach((m, k) => inst.setMatrixAt(k, m));
+            inst.receiveShadow = true;
         inst.frustumCulled = false;
         group.add(inst);
       }
@@ -1348,12 +1373,11 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       else parked.push({ x: cx + side * kerb, z: cz + along, yaw: 0 });
     }
     for (const lot of lotCars) {
-      // Fill the lot with as many back-to-back bay bands as it holds instead of
-      // a fixed pair of rows marooned in the middle of a big block.
-      const usable = 2 * (lot.half - 2.1);
+      // A wide lot gets a longer bay row, but never more than LOT_BANDS bands
+      // deep: filling the whole block edge to edge reads as a wrecking yard.
       const band = LOT_ROWS * LOT_SLOT_D + LOT_AISLE;
-      const bands = Math.max(1, Math.floor(usable / band));
-      const cols = Math.max(LOT_COLS, Math.floor(usable / LOT_SLOT_W));
+      const bands = Math.max(1, Math.min(LOT_BANDS, Math.floor((lot.halfB - 2.1) * 2 / band)));
+      const cols = Math.max(4, Math.min(LOT_COLS, Math.floor((lot.halfA - 2.1) * 2 / LOT_SLOT_W)));
       const spanA = cols * LOT_SLOT_W;
       for (let bb = 0; bb < bands; bb++) {
         const bandMid = -(bands * band) / 2 + (bb + 0.5) * band;
@@ -1364,7 +1388,9 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
             const rowZ = bandMid + (rr === 0 ? -(band / 2 - LOT_SLOT_D / 2) : band / 2 - LOT_SLOT_D / 2);
             const lx = lot.yaw === 0 ? lot.x + a : lot.x + rowZ;
             const lz = lot.yaw === 0 ? lot.z + rowZ : lot.z + a;
-            if (Math.abs(lx - lot.x) > lot.half - 2.1 || Math.abs(lz - lot.z) > lot.half - 2.1) continue;
+            const limX = lot.yaw === 0 ? lot.halfA : lot.halfB;
+            const limZ = lot.yaw === 0 ? lot.halfB : lot.halfA;
+            if (Math.abs(lx - lot.x) > limX - 2.1 || Math.abs(lz - lot.z) > limZ - 2.1) continue;
             const yaw = lot.yaw === 0 ? (rr === 0 ? 0 : Math.PI) : (rr === 0 ? -Math.PI / 2 : Math.PI / 2);
             parked.push({ x: lx, z: lz, yaw });
           }

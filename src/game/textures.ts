@@ -69,8 +69,8 @@ function tileTexture(plain: boolean) {
     g.fillRect(x - r, y - r, r * 2, r * 2);
   }
   if (!plain) {
-    g.fillStyle = '#8f8a82'; g.fillRect(a - 0.9 * s, a - 0.9 * s, b - a + 1.8 * s, b - a + 1.8 * s);
-    g.fillStyle = '#b9b6ae'; g.fillRect(a, a, b - a, b - a);
+    g.fillStyle = '#8b9095'; g.fillRect(a - 0.9 * s, a - 0.9 * s, b - a + 1.8 * s, b - a + 1.8 * s);
+    g.fillStyle = '#b7bcc0'; g.fillRect(a, a, b - a, b - a);
   }
   // Centreline. A cell only paints its two low edges, a half-open interval, so
   // neighbouring cells never lay a second line over the same stretch of road.
@@ -105,7 +105,9 @@ function roadRoughnessTexture(plain: boolean) {
   const px = 512, s = px / CELL;
   const c = canvas(px);
   const g = c.getContext('2d')!;
-  g.fillStyle = '#5d5d5d';
+  // Asphalt is matte. Values much below ~0.7 turn the roadway into a mirror and
+  // the sun burns a white streak across it once it drops towards the horizon.
+  g.fillStyle = '#c9c9c9';
   g.fillRect(0, 0, px, px);
   const rnd = mulberry32(9147);
   for (let k = 0; k < 46; k++) {
@@ -114,9 +116,9 @@ function roadRoughnessTexture(plain: boolean) {
     const rx = 8 + rnd() * 42;
     const ry = 20 + rnd() * 80;
     const grd = g.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
-    const v = 30 + Math.floor(rnd() * 35);
+    const v = 138 + Math.floor(rnd() * 34);
     grd.addColorStop(0, `rgb(${v},${v},${v})`);
-    grd.addColorStop(1, 'rgba(105,105,105,0)');
+    grd.addColorStop(1, 'rgba(201,201,201,0)');
     g.fillStyle = grd;
     g.fillRect(x - rx, y - ry, rx * 2, ry * 2);
   }
@@ -293,15 +295,15 @@ function lotTexture() {
 function sidewalkTexture() {
   const px = 512;
   const c = canvas(px);
-  const g = noiseFill(c, '#c4c1b8', 8);
-  g.strokeStyle = 'rgba(90,86,78,0.22)';
+  const g = noiseFill(c, '#b7bcc0', 8);
+  g.strokeStyle = 'rgba(78,84,90,0.24)';
   g.lineWidth = 2;
   const step = px / 8;
   for (let k = 0; k <= 8; k++) {
     g.beginPath(); g.moveTo(k * step, 0); g.lineTo(k * step, px); g.stroke();
     g.beginPath(); g.moveTo(0, k * step); g.lineTo(px, k * step); g.stroke();
   }
-  g.fillStyle = 'rgba(70,68,62,0.35)';
+  g.fillStyle = 'rgba(62,68,74,0.35)';
   g.beginPath(); g.arc(px * 0.28, px * 0.62, 11, 0, Math.PI * 2); g.fill();
   g.beginPath(); g.arc(px * 0.74, px * 0.3, 11, 0, Math.PI * 2); g.fill();
   return finish(c, true, 6);
@@ -418,13 +420,13 @@ export function createAssets() {
     hwyBoth: roadMat(highwayTexture('both')),
     jersey: new THREE.MeshLambertMaterial({ color: 0xc5c7c2 }),
     lotFloor: new THREE.MeshLambertMaterial({ map: lotTexture() }),
-    sidewalk: new THREE.MeshLambertMaterial({ map: sidewalkTexture(), color: 0xc4c1b8 }),
+    sidewalk: new THREE.MeshLambertMaterial({ map: sidewalkTexture(), color: 0xb7bcc0 }),
     curb: new THREE.MeshLambertMaterial({ color: 0x8b877f }),
     under: new THREE.MeshLambertMaterial({ color: 0x16181c }),
     tactile: new THREE.MeshLambertMaterial({ color: 0xc9b48a }),
     grass: new THREE.MeshLambertMaterial({ color: 0x5f9450 }),
     plaza: new THREE.MeshLambertMaterial({ color: 0xd2c7b0 }),
-    lot: new THREE.MeshLambertMaterial({ color: 0x9d978c }),
+    lot: new THREE.MeshLambertMaterial({ color: 0x6c7175 }),
     stone: new THREE.MeshLambertMaterial({ color: 0xa19b91 }),
     roof: new THREE.MeshLambertMaterial({ color: 0x5c606a }),
     hvac: new THREE.MeshLambertMaterial({ color: 0x8e939c }),

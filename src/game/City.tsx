@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { CuboidCollider, RigidBody, TrimeshCollider } from '@react-three/rapier';
 import { CELL } from './config';
 import { ChunkData, ensureFacades, generateChunk } from './city';
@@ -56,6 +56,10 @@ export function City() {
   );
   const center = useRef({ i: 0, j: 0 });
   const setBooting = useGame((s) => s.setBooting);
+
+  // Handle for scripts/shot.mjs, which inspects the live scene from headless Chrome.
+  const three = useThree();
+  useEffect(() => { (window as unknown as { three: unknown }).three = three; }, [three]);
 
   useEffect(() => {
     ensureFacades();

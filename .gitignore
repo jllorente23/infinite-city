@@ -5,3 +5,7 @@ out
 *.tsbuildinfo
 next-env.d.ts
 .vercel
+
+# Local headless-Chrome tooling for scripts/shot.mjs
+chrome-headless-shell/
+shots/

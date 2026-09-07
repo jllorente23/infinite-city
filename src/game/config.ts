@@ -32,8 +32,9 @@ export const BRIDGE_RISE = 1.5;
 /** One crossing every this many blocks along a canal. */
 export const BRIDGE_EVERY = 2;
 export const CORNER_R = 3.4;
-export const LOT_COLS = 8;
+export const LOT_COLS = 12;
 export const LOT_ROWS = 2;
+export const LOT_BANDS = 2;
 export const LOT_SLOT_W = 2.55;
 export const LOT_SLOT_D = 5.1;
 export const LOT_AISLE = 5.8;
