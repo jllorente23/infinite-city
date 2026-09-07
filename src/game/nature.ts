@@ -15,17 +15,19 @@ export const NATURE = {
   birch: { url: '/models/nature/BirchTree_2.glb', scale: 3.9 },
   pine: { url: '/models/nature/PineTree_2.glb', scale: 4.4 },
   willow: { url: '/models/nature/Willow_1.glb', scale: 3.6 },
-  bush: { url: '/models/nature/Bush_1.glb', scale: 3.4 },
-  berries: { url: '/models/nature/BushBerries_1.glb', scale: 3.2 },
-  flowers: { url: '/models/nature/Flowers.glb', scale: 2.8 },
-  plant: { url: '/models/nature/Plant_2.glb', scale: 2.6 },
-  grass: { url: '/models/nature/Grass_2.glb', scale: 2.4 },
-  rock: { url: '/models/nature/Rock_Moss_1.glb', scale: 2.2 }
+  bush: { url: '/models/nature/Bush_1.glb', scale: 2.05 },
+  berries: { url: '/models/nature/BushBerries_1.glb', scale: 1.9 },
+  flowers: { url: '/models/nature/Flowers.glb', scale: 2.1 },
+  plant: { url: '/models/nature/Plant_2.glb', scale: 1.85 },
+  grass: { url: '/models/nature/Grass_2.glb', scale: 1.7 },
+  rock: { url: '/models/nature/Rock_Moss_1.glb', scale: 1.8 }
 } as const;
 
 export type NatureKind = keyof typeof NATURE;
 export const TREE_KINDS: NatureKind[] = ['common', 'commonB', 'birch', 'pine', 'willow'];
 export const GROUND_KINDS: NatureKind[] = ['bush', 'berries', 'flowers', 'plant', 'grass', 'rock'];
+/** Compact kerb planting — no wide bushes that spill onto the asphalt. */
+export const KERB_KINDS: NatureKind[] = ['flowers', 'plant', 'grass', 'rock'];
 
 export type NatureMesh = { geometry: THREE.BufferGeometry; material: THREE.Material };
 export type CityNature = Record<NatureKind, NatureMesh>;

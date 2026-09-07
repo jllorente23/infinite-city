@@ -4,12 +4,13 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RapierRigidBody, RigidBody, CuboidCollider } from '@react-three/rapier';
-import { CELL } from './config';
+import { CELL, HW_INNER, HW_OUTER } from './config';
 import { heightAt } from './rng';
 import { makeVehicle, pickHue, specOf, vehicleHeight, VehicleKind } from './vehicles';
 import { playerPos, qualityOf, useGame } from './store';
 import { signalState } from './signals';
 import { useCityCars } from './carModels';
+import { isCanalCol, isCanalRow, isHwyCol, isHwyRow } from './city';
 
 const KINDS: VehicleKind[] = ['sedan', 'sedan', 'suv', 'taxi', 'pickup', 'van', 'bus', 'police', 'ambulance'];
 const DIR_YAW = [-Math.PI / 2, Math.PI, Math.PI / 2, 0];
@@ -69,6 +70,8 @@ type Agent = {
   live: boolean;
   plan: Turn | null;
   arc: Arc | null;
+  lane: number;
+  hwy: boolean;
 };
 
 /** Every car currently on the road, so each one can see the one in front. */
@@ -78,11 +81,11 @@ const agents = new Set<Agent>();
 const runsAlongX = (dir: number) => dir === 0 || dir === 2;
 const headingSign = (dir: number) => (dir === 0 || dir === 1 ? 1 : -1);
 
-function laneOf(dir: number, center: number, along: number) {
-  if (dir === 0) return { x: along, z: center + LANE };
-  if (dir === 1) return { x: center - LANE, z: along };
-  if (dir === 2) return { x: along, z: center - LANE };
-  return { x: center + LANE, z: along };
+function laneOf(dir: number, center: number, along: number, lane = LANE) {
+  if (dir === 0) return { x: along, z: center + lane };
+  if (dir === 1) return { x: center - lane, z: along };
+  if (dir === 2) return { x: along, z: center - lane };
+  return { x: center + lane, z: along };
 }
 
 /** Crossing of two axis-aligned lanes: the sharp corner a turn bends around. */
@@ -162,7 +165,7 @@ function agentWorld(a: Agent, out: { x: number; z: number }) {
     out.x = _pos.x;
     out.z = _pos.z;
   } else {
-    const p = laneOf(a.dir, a.center, a.along);
+    const p = laneOf(a.dir, a.center, a.along, a.lane);
     out.x = p.x;
     out.z = p.z;
   }
@@ -236,7 +239,7 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
   }, [kind, spec]);
 
   const agent = useRef<Agent>({
-    dir: 0, center: 0, along: 0, cruise: 12, speed: 0, len: spec.L, live: false, plan: null, arc: null
+    dir: 0, center: 0, along: 0, cruise: 12, speed: 0, len: spec.L, live: false, plan: null, arc: null, lane: LANE, hwy: false
   });
 
   const spin = useRef(0);
@@ -246,38 +249,72 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
     const a = agent.current;
     a.arc = null;
     a.plan = null;
+    const adopt = (dir: number, center: number, along: number, lane: number, hwy: boolean, cruise: number) => {
+      a.dir = dir;
+      a.center = center;
+      a.along = along;
+      a.lane = lane;
+      a.hwy = hwy;
+      a.cruise = cruise;
+      a.speed = cruise;
+      a.live = true;
+      place(true);
+    };
+    const blocked = (probe: { x: number; z: number }) => {
+      for (const other of agents) {
+        if (other === a || !other.live) continue;
+        agentWorld(other, _other);
+        if (Math.hypot(probe.x - _other.x, probe.z - _other.z) < other.len + a.len + MIN_GAP) return true;
+      }
+      return false;
+    };
+
     for (let attempt = 0; attempt < 16; attempt++) {
       const behind = playerPos.heading + Math.PI + (Math.random() - 0.5) * 2.2;
       const side = playerPos.heading + (Math.random() < 0.5 ? 1 : -1) * (1.05 + Math.random() * 0.7);
       const ang = attempt % 3 === 0 ? side : behind;
       const d = 100 + Math.random() * 150;
-      const alongX = Math.random() < 0.5;
-      const dir = alongX ? (Math.random() < 0.5 ? 0 : 2) : Math.random() < 0.5 ? 1 : 3;
       const px = playerPos.x + Math.cos(ang) * d;
       const pz = playerPos.z + Math.sin(ang) * d;
-      const center = Math.round((alongX ? pz : px) / CELL) * CELL;
-      const along = alongX ? px : pz;
+      const wantHwy = attempt < 6;
+      let dir = 0, center = 0, along = 0, lane = LANE, hwy = false;
 
-      const probe = laneOf(dir, center, along);
-      let clear = true;
-      for (const other of agents) {
-        if (other === a || !other.live) continue;
-        agentWorld(other, _other);
-        if (Math.hypot(probe.x - _other.x, probe.z - _other.z) < other.len + a.len + MIN_GAP) {
-          clear = false;
-          break;
+      if (wantHwy) {
+        const ci = Math.round(px / CELL);
+        const cj = Math.round(pz / CELL);
+        let found = false;
+        for (let off = -3; off <= 3 && !found; off++) {
+          if (isHwyCol(seed, ci + off) && !isCanalCol(seed, ci + off)) {
+            dir = Math.random() < 0.5 ? 1 : 3;
+            center = (ci + off) * CELL + CELL / 2;
+            along = pz;
+            lane = Math.random() < 0.5 ? HW_INNER : HW_OUTER;
+            hwy = true;
+            found = true;
+          } else if (isHwyRow(seed, cj + off) && !isCanalRow(seed, cj + off)) {
+            dir = Math.random() < 0.5 ? 0 : 2;
+            center = (cj + off) * CELL + CELL / 2;
+            along = px;
+            lane = Math.random() < 0.5 ? HW_INNER : HW_OUTER;
+            hwy = true;
+            found = true;
+          }
         }
+        if (!found) continue;
+      } else {
+        const alongX = Math.random() < 0.5;
+        dir = alongX ? (Math.random() < 0.5 ? 0 : 2) : Math.random() < 0.5 ? 1 : 3;
+        center = Math.round((alongX ? pz : px) / CELL) * CELL;
+        along = alongX ? px : pz;
+        lane = LANE;
+        hwy = false;
       }
-      if (!clear) continue;
+
+      const probe = laneOf(dir, center, along, lane);
+      if (blocked(probe)) continue;
       if (d < 160 && aheadOfPlayer(probe.x, probe.z)) continue;
 
-      a.dir = dir;
-      a.center = center;
-      a.along = along;
-      a.cruise = 10 + Math.random() * 7;
-      a.speed = a.cruise;
-      a.live = true;
-      place(true);
+      adopt(dir, center, along, lane, hwy, hwy ? 16 + Math.random() * 8 : 10 + Math.random() * 7);
       return;
     }
     a.live = false;
@@ -304,7 +341,7 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
       placeAt(_pos.x, _pos.z, lerpAngle(a.arc.yaw0, a.arc.yaw1, t), snap);
       return;
     }
-    const p = laneOf(a.dir, a.center, a.along);
+    const p = laneOf(a.dir, a.center, a.along, a.lane);
     placeAt(p.x, p.z, DIR_YAW[a.dir], snap);
   };
 
@@ -359,14 +396,14 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
       if (model.wheels) for (const w of model.wheels) w.rotation.x = spin.current;
       const here = a.arc
         ? bezier2(_pos, a.arc.p0, a.arc.p1, a.arc.p2, a.arc.t)
-        : laneOf(a.dir, a.center, a.along);
+        : laneOf(a.dir, a.center, a.along, a.lane);
       if (shouldRecycle(here.x, here.z)) respawn();
       return;
     }
 
     const sgn = headingSign(a.dir);
     const alongX = runsAlongX(a.dir);
-    const here = laneOf(a.dir, a.center, a.along);
+    const here = laneOf(a.dir, a.center, a.along, a.lane);
 
     let want = a.cruise;
     let room = Infinity;
@@ -377,27 +414,31 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
       if (distance < room) { room = distance; roomSpeed = speed; }
     };
 
-    const node = sgn > 0 ? Math.ceil(a.along / CELL) * CELL : Math.floor(a.along / CELL) * CELL;
-    const toNode = Math.abs(node - a.along);
-    if (toNode < 42) {
-      const nx = alongX ? node : a.center;
-      const nz = alongX ? a.center : node;
-      const clock = useGame.getState().clock;
-      const st = signalState(seed, nx, nz, alongX, clock);
-      const mayGo = st === 2 || (st === 1 && toNode < 12 && a.speed > 9);
+    if (!a.hwy) {
+      const node = sgn > 0 ? Math.ceil(a.along / CELL) * CELL : Math.floor(a.along / CELL) * CELL;
+      const toNode = Math.abs(node - a.along);
+      if (toNode < 42) {
+        const nx = alongX ? node : a.center;
+        const nz = alongX ? a.center : node;
+        const clock = useGame.getState().clock;
+        const st = signalState(seed, nx, nz, alongX, clock);
+        const mayGo = st === 2 || (st === 1 && toNode < 12 && a.speed > 9);
 
-      if (!a.plan && toNode < 28) {
-        const r = Math.random();
-        a.plan = r < 0.28 ? 'left' : r < 0.56 ? 'right' : 'straight';
-      }
-      if (!mayGo) hold(toNode - STOP_LINE);
-      else if (a.plan && a.plan !== 'straight' && toNode < TURN_IN + 0.4) {
-        beginTurn(a, a.plan, node);
-        place();
-        return;
+        if (!a.plan && toNode < 28) {
+          const r = Math.random();
+          a.plan = r < 0.28 ? 'left' : r < 0.56 ? 'right' : 'straight';
+        }
+        if (!mayGo) hold(toNode - STOP_LINE);
+        else if (a.plan && a.plan !== 'straight' && toNode < TURN_IN + 0.4) {
+          beginTurn(a, a.plan, node);
+          place();
+          return;
+        }
+      } else {
+        a.plan = null;
       }
     } else {
-      a.plan = null;
+      a.plan = 'straight';
     }
 
     const lead = nearestThreat(a);

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLOCK, CELL, SIDEWALK, STREET } from './config';
+import { BLOCK, CELL, HW_LANE, HW_MEDIAN, HW_SHOULDER, HW_WIDTH, SIDEWALK, STREET } from './config';
 import { mulberry32 } from './rng';
 
 function canvas(px: number) {
@@ -161,6 +161,112 @@ function stripTexture() {
   return finish(c, true);
 }
 
+function dashRun(g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, on: number, off: number, thick: number) {
+  g.lineWidth = thick;
+  g.setLineDash([on, off]);
+  g.beginPath();
+  g.moveTo(x0, y0);
+  g.lineTo(x1, y1);
+  g.stroke();
+  g.setLineDash([]);
+}
+
+/** Four-lane carriageway painted through the block, with city streets still on the edges. */
+function highwayTexture(axis: 'x' | 'z' | 'both') {
+  const px = 1024, s = px / CELL;
+  const c = canvas(px);
+  const g = noiseFill(c, '#41464f', 6);
+  const a = (STREET / 2) * s, b = (CELL - STREET / 2) * s;
+  g.fillStyle = '#7d9a5c';
+  g.fillRect(a, a, b - a, b - a);
+
+  const paintBand = (horizontal: boolean) => {
+    const mid = px / 2;
+    const half = (HW_WIDTH / 2) * s;
+    const lane = HW_LANE * s;
+    const med = HW_MEDIAN * s;
+    const rumble = HW_SHOULDER * 0.35 * s;
+    if (horizontal) {
+      g.fillStyle = '#3a4049';
+      g.fillRect(0, mid - half, px, half * 2);
+      g.fillStyle = '#5a4038';
+      g.fillRect(0, mid - half, px, rumble);
+      g.fillRect(0, mid + half - rumble, px, rumble);
+      if (axis !== 'both') {
+        g.fillStyle = '#6a8a52';
+        g.fillRect(a, mid - med / 2, b - a, med);
+      }
+      g.fillStyle = '#e6d28e';
+      g.fillRect(0, mid - med / 2 - 2.5, px, 3);
+      g.fillRect(0, mid + med / 2 - 0.5, px, 3);
+      g.strokeStyle = '#e8e6de';
+      dashRun(g, 0, mid - med / 2 - lane, px, mid - med / 2 - lane, 14, 16, 3);
+      dashRun(g, 0, mid + med / 2 + lane, px, mid + med / 2 + lane, 14, 16, 3);
+      g.strokeStyle = '#d9d7cf';
+      g.lineWidth = 4;
+      g.beginPath();
+      g.moveTo(0, mid - half + rumble + 2);
+      g.lineTo(px, mid - half + rumble + 2);
+      g.moveTo(0, mid + half - rumble - 2);
+      g.lineTo(px, mid + half - rumble - 2);
+      g.stroke();
+    } else {
+      g.fillStyle = '#3a4049';
+      g.fillRect(mid - half, 0, half * 2, px);
+      g.fillStyle = '#5a4038';
+      g.fillRect(mid - half, 0, rumble, px);
+      g.fillRect(mid + half - rumble, 0, rumble, px);
+      if (axis !== 'both') {
+        g.fillStyle = '#6a8a52';
+        g.fillRect(mid - med / 2, a, med, b - a);
+      }
+      g.fillStyle = '#e6d28e';
+      g.fillRect(mid - med / 2 - 2.5, 0, 3, px);
+      g.fillRect(mid + med / 2 - 0.5, 0, 3, px);
+      g.strokeStyle = '#e8e6de';
+      dashRun(g, mid - med / 2 - lane, 0, mid - med / 2 - lane, px, 14, 16, 3);
+      dashRun(g, mid + med / 2 + lane, 0, mid + med / 2 + lane, px, 14, 16, 3);
+      g.strokeStyle = '#d9d7cf';
+      g.lineWidth = 4;
+      g.beginPath();
+      g.moveTo(mid - half + rumble + 2, 0);
+      g.lineTo(mid - half + rumble + 2, px);
+      g.moveTo(mid + half - rumble - 2, 0);
+      g.lineTo(mid + half - rumble - 2, px);
+      g.stroke();
+    }
+  };
+
+  if (axis === 'x' || axis === 'both') paintBand(true);
+  if (axis === 'z' || axis === 'both') paintBand(false);
+
+  if (axis === 'both') {
+    const mid = px / 2;
+    const half = (HW_WIDTH / 2) * s;
+    g.fillStyle = '#3a4049';
+    g.fillRect(mid - half, mid - half, half * 2, half * 2);
+  }
+
+  g.fillStyle = '#e6d28e';
+  const lane = 0.32 * s, dash = 3 * s;
+  for (let d = a; d < b; d += dash * 2) {
+    const run = Math.min(dash, b - d);
+    g.fillRect(d, 0, run, lane);
+    g.fillRect(0, d, lane, run);
+  }
+  g.fillStyle = '#dedcd4';
+  const stripe = 0.85 * s, gap = 0.75 * s, len = 2.4 * s;
+  for (const [jx, jz] of [[0, 0], [px, 0], [0, px], [px, px]] as const) {
+    for (let m = -a + gap; m < a - gap; m += stripe + gap) {
+      g.fillRect(jx + m, jz - a - len, stripe, len);
+      g.fillRect(jx + m, jz + a, stripe, len);
+      g.fillRect(jx - a - len, jz + m, len, stripe);
+      g.fillRect(jx + a, jz + m, len, stripe);
+    }
+  }
+  return finish(c);
+}
+
 function lotTexture() {
   const px = 512;
   const c = canvas(px);
@@ -240,33 +346,28 @@ export function createAssets() {
   const roadRoughness = roadRoughnessTexture(false);
   const asphaltNormal = asphaltNormalTexture();
 
+  const roadMat = (map: THREE.Texture, extra: THREE.MeshStandardMaterialParameters = {}) =>
+    new THREE.MeshStandardMaterial({
+      map,
+      roughness: 0.9,
+      metalness: 0.04,
+      normalMap: asphaltNormal,
+      normalScale: new THREE.Vector2(0.1, 0.1),
+      ...extra
+    });
+
   const mats = {
-    tile: new THREE.MeshPhysicalMaterial({
-      map: tileTexture(false),
-      roughness: 0.92,
-      roughnessMap: roadRoughness,
-      normalMap: asphaltNormal,
-      normalScale: new THREE.Vector2(0.13, 0.13),
-      metalness: 0.06,
-      clearcoat: 0.32,
-      clearcoatRoughness: 0.38,
-      envMap: env,
-      envMapIntensity: 0.85
-    }),
-    strip: new THREE.MeshPhysicalMaterial({
-      map: stripTexture(),
-      roughness: 0.3,
-      normalMap: asphaltNormal,
-      normalScale: new THREE.Vector2(0.13, 0.13),
-      metalness: 0.08,
-      clearcoat: 0.4,
-      clearcoatRoughness: 0.32,
-      envMap: env,
-      envMapIntensity: 0.95,
+    tile: roadMat(tileTexture(false), { roughnessMap: roadRoughness }),
+    strip: roadMat(stripTexture(), {
+      roughness: 0.82,
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2
     }),
+    hwyX: roadMat(highwayTexture('x')),
+    hwyZ: roadMat(highwayTexture('z')),
+    hwyBoth: roadMat(highwayTexture('both')),
+    jersey: new THREE.MeshLambertMaterial({ color: 0xc5c7c2 }),
     lotFloor: new THREE.MeshLambertMaterial({ map: lotTexture() }),
     sidewalk: new THREE.MeshLambertMaterial({ color: 0xc4c1b8 }),
     curb: new THREE.MeshLambertMaterial({ color: 0x8b877f }),

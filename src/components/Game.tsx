@@ -8,7 +8,6 @@ import { City } from '@/game/City';
 import { Car } from '@/game/Car';
 import { Traffic } from '@/game/Traffic';
 import { DayNight } from '@/game/DayNight';
-import { PostFX } from '@/game/PostFX';
 import { SKY_RADIUS } from '@/game/config';
 import { qualityOf, useGame } from '@/game/store';
 import { Hud } from './Hud';
@@ -50,7 +49,6 @@ export default function Game() {
             <Car />
             <Traffic />
           </Physics>
-          {q.post && <PostFX />}
         </Suspense>
       </Canvas>
 
