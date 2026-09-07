@@ -1,0 +1,286 @@
+import * as THREE from 'three';
+import { BLOCK, CELL, SIDEWALK, STREET } from './config';
+import { mulberry32 } from './rng';
+
+function canvas(px: number) {
+  const c = document.createElement('canvas');
+  c.width = px; c.height = px;
+  return c;
+}
+
+function noiseFill(c: HTMLCanvasElement, base: string, amp: number) {
+  const g = c.getContext('2d')!;
+  g.fillStyle = base; g.fillRect(0, 0, c.width, c.height);
+  const img = g.getImageData(0, 0, c.width, c.height);
+  const d = img.data;
+  for (let k = 0; k < d.length; k += 4) {
+    const n = ((Math.random() * amp * 2 - amp) | 0);
+    d[k] += n; d[k + 1] += n; d[k + 2] += n;
+  }
+  g.putImageData(img, 0, 0);
+  return g;
+}
+
+function finish(c: HTMLCanvasElement, wrap = false, aniso = 8) {
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = aniso;
+  if (wrap) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+/** One cell of asphalt: block platform in the middle, lane markings and zebras at the edges. */
+function tileTexture(plain: boolean) {
+  const px = 1024, s = px / CELL;
+  const c = canvas(px);
+  const g = noiseFill(c, '#41464f', 7);
+  const a = (STREET / 2) * s, b = (CELL - STREET / 2) * s;
+  if (!plain) {
+    g.fillStyle = '#8f8a82'; g.fillRect(a - 0.9 * s, a - 0.9 * s, b - a + 1.8 * s, b - a + 1.8 * s);
+    g.fillStyle = '#b9b6ae'; g.fillRect(a, a, b - a, b - a);
+  }
+  g.strokeStyle = '#e6d28e'; g.lineWidth = 0.32 * s;
+  g.setLineDash([3 * s, 3 * s]);
+  for (const edge of [0, px]) {
+    g.beginPath(); g.moveTo(edge, 0); g.lineTo(edge, px); g.stroke();
+    g.beginPath(); g.moveTo(0, edge); g.lineTo(px, edge); g.stroke();
+  }
+  g.setLineDash([]);
+  g.fillStyle = '#dedcd4';
+  for (const [cx, cz] of [[0, 0], [px, 0], [0, px], [px, px]]) {
+    const half = (STREET / 2) * s, stripe = 0.85 * s, gap = 0.75 * s, len = 2.4 * s;
+    for (let m = -half + gap; m < half - gap; m += stripe + gap) {
+      g.fillRect(cx + m, cz - half - len, stripe, len);
+      g.fillRect(cx + m, cz + half, stripe, len);
+      g.fillRect(cx - half - len, cz + m, len, stripe);
+      g.fillRect(cx + half, cz + m, len, stripe);
+    }
+  }
+  return finish(c);
+}
+
+function stripTexture() {
+  const px = 256;
+  const c = canvas(px);
+  const g = noiseFill(c, '#3f444d', 7);
+  g.strokeStyle = '#e6d28e'; g.lineWidth = 6; g.setLineDash([22, 22]);
+  g.beginPath(); g.moveTo(px / 2, 0); g.lineTo(px / 2, px); g.stroke();
+  g.setLineDash([]); g.strokeStyle = '#d9d7cf'; g.lineWidth = 5;
+  g.beginPath(); g.moveTo(8, 0); g.lineTo(8, px); g.moveTo(px - 8, 0); g.lineTo(px - 8, px); g.stroke();
+  return finish(c, true);
+}
+
+function lotTexture() {
+  const px = 512;
+  const c = canvas(px);
+  const g = noiseFill(c, '#3a3f47', 6);
+  g.strokeStyle = '#dcd9cf'; g.lineWidth = 3;
+  for (let r = 0; r < 4; r++) {
+    const y0 = 40 + r * 118;
+    for (let k = 0; k < 12; k++) { g.beginPath(); g.moveTo(24 + k * 39, y0); g.lineTo(24 + k * 39, y0 + 74); g.stroke(); }
+    g.beginPath(); g.moveTo(24, y0); g.lineTo(24 + 11 * 39, y0); g.stroke();
+    g.beginPath(); g.moveTo(24, y0 + 74); g.lineTo(24 + 11 * 39, y0 + 74); g.stroke();
+  }
+  return finish(c);
+}
+
+/** Facade: colour map plus an emissive map so windows light up at night. */
+function windowTextures() {
+  const n = 4, px = 256, cell = px / n;
+  const c = canvas(px), e = canvas(px);
+  const g = c.getContext('2d')!, ge = e.getContext('2d')!;
+  g.fillStyle = '#f4f3ef'; g.fillRect(0, 0, px, px);
+  ge.fillStyle = '#000'; ge.fillRect(0, 0, px, px);
+  const rnd = mulberry32(99);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const x = i * cell, y = j * cell, lit = rnd() < 0.42;
+      g.fillStyle = '#d9d6cf'; g.fillRect(x, y + cell - 4, cell, 4);
+      g.fillStyle = '#2f3b4a'; g.fillRect(x + 10, y + 8, cell - 20, cell - 24);
+      g.fillStyle = 'rgba(180,200,220,0.45)';
+      g.beginPath(); g.moveTo(x + 10, y + 8); g.lineTo(x + cell - 10, y + 8); g.lineTo(x + cell - 10, y + 22); g.closePath(); g.fill();
+      g.fillStyle = '#f4f3ef'; g.fillRect(x + cell / 2 - 1.5, y + 8, 3, cell - 24);
+      if (lit) {
+        ge.fillStyle = rnd() < 0.5 ? '#ffd58a' : '#cfe3ff';
+        ge.fillRect(x + 10, y + 8, cell - 20, cell - 24);
+        ge.fillStyle = '#000'; ge.fillRect(x + cell / 2 - 1.5, y + 8, 3, cell - 24);
+      }
+    }
+  }
+  return { map: finish(c, true, 4), emissive: finish(e, true, 4) };
+}
+
+function glowTexture() {
+  const px = 128;
+  const c = canvas(px);
+  const g = c.getContext('2d')!;
+  const grd = g.createRadialGradient(px / 2, px / 2, 2, px / 2, px / 2, px / 2);
+  grd.addColorStop(0, 'rgba(255,232,170,0.95)');
+  grd.addColorStop(0.45, 'rgba(255,220,140,0.35)');
+  grd.addColorStop(1, 'rgba(255,210,120,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, px, px);
+  return finish(c, false, 2);
+}
+
+/** Cheap equirectangular environment so car paint has something to reflect. */
+function envTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 64;
+  const g = c.getContext('2d')!;
+  const grd = g.createLinearGradient(0, 0, 0, 64);
+  grd.addColorStop(0, '#dfeaf6'); grd.addColorStop(0.46, '#9fb6cd');
+  grd.addColorStop(0.54, '#5b6470'); grd.addColorStop(1, '#2b3038');
+  g.fillStyle = grd; g.fillRect(0, 0, 128, 64);
+  g.fillStyle = 'rgba(255,250,230,0.9)';
+  g.beginPath(); g.arc(34, 16, 9, 0, Math.PI * 2); g.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+let cached: any = null;
+
+export function createAssets() {
+  if (cached) return cached as Assets;
+
+  const win = windowTextures();
+  const env = envTexture();
+
+  const mats = {
+    tile: new THREE.MeshLambertMaterial({ map: tileTexture(false) }),
+    tilePlain: new THREE.MeshLambertMaterial({ map: tileTexture(true) }),
+    strip: new THREE.MeshLambertMaterial({ map: stripTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+    lotFloor: new THREE.MeshLambertMaterial({ map: lotTexture() }),
+    sidewalk: new THREE.MeshLambertMaterial({ color: 0xc4c1b8 }),
+    curb: new THREE.MeshLambertMaterial({ color: 0x8b877f }),
+    grass: new THREE.MeshLambertMaterial({ color: 0x5f9450 }),
+    plaza: new THREE.MeshLambertMaterial({ color: 0xd2c7b0 }),
+    lot: new THREE.MeshLambertMaterial({ color: 0x9d978c }),
+    stone: new THREE.MeshLambertMaterial({ color: 0xa19b91 }),
+    roof: new THREE.MeshLambertMaterial({ color: 0x5c606a }),
+    hvac: new THREE.MeshLambertMaterial({ color: 0x8e939c }),
+    trunk: new THREE.MeshLambertMaterial({ color: 0x5b4231 }),
+    leaf: new THREE.MeshLambertMaterial({ color: 0x3f7e3c }),
+    leaf2: new THREE.MeshLambertMaterial({ color: 0x5a9a48 }),
+    pole: new THREE.MeshLambertMaterial({ color: 0x737b88 }),
+    bulb: new THREE.MeshLambertMaterial({ color: 0xfff3b8, emissive: 0xffd77a, emissiveIntensity: 0.3 }),
+    water: new THREE.MeshLambertMaterial({ color: 0x1d5f8f }),
+    deck: new THREE.MeshLambertMaterial({ color: 0x585d66 }),
+    rail: new THREE.MeshLambertMaterial({ color: 0xc9ccd2 }),
+    hedge: new THREE.MeshLambertMaterial({ color: 0x3d6f37 }),
+    wood: new THREE.MeshLambertMaterial({ color: 0x8a6440 }),
+    metal: new THREE.MeshLambertMaterial({ color: 0x6c737e }),
+    mallWall: new THREE.MeshLambertMaterial({ color: 0xd8cfc2 }),
+    mallBand: new THREE.MeshLambertMaterial({ color: 0x2f6ba8 }),
+    mallGlass: new THREE.MeshLambertMaterial({ color: 0x3c4c5e, emissive: 0xffe6a8, emissiveIntensity: 0 }),
+    sign: new THREE.MeshLambertMaterial({ color: 0xe8613c, emissive: 0xe8613c, emissiveIntensity: 0.15 }),
+    glow: new THREE.MeshBasicMaterial({
+      map: glowTexture(), transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, fog: false
+    }),
+    tlRed: new THREE.MeshLambertMaterial({ color: 0x5a1a14, emissive: 0xff3b22, emissiveIntensity: 0.9 }),
+    tlAmber: new THREE.MeshLambertMaterial({ color: 0x4a3208, emissive: 0xffb020, emissiveIntensity: 0.9 }),
+    tlGreen: new THREE.MeshLambertMaterial({ color: 0x14401f, emissive: 0x3fe06a, emissiveIntensity: 0.9 }),
+    facades: [] as THREE.MeshLambertMaterial[],
+    merged: new THREE.MeshLambertMaterial({
+      map: win.map, vertexColors: true, emissive: 0xffffff, emissiveMap: win.emissive, emissiveIntensity: 0
+    })
+  };
+
+  const geos = {
+    curb: new THREE.BoxGeometry(BLOCK + 1.2, 0.9, BLOCK + 1.2),
+    sidewalk: new THREE.BoxGeometry(BLOCK, 1.0, BLOCK),
+    inner: new THREE.BoxGeometry(BLOCK - SIDEWALK * 2, 1.0, BLOCK - SIDEWALK * 2),
+    trunk: new THREE.CylinderGeometry(0.22, 0.34, 2.4, 6),
+    leaf: new THREE.SphereGeometry(1.6, 9, 7),
+    pole: new THREE.CylinderGeometry(0.11, 0.16, 5.6, 6),
+    bulb: new THREE.SphereGeometry(0.36, 8, 6),
+    hvac: new THREE.BoxGeometry(2, 1, 1.4),
+    basin: new THREE.CylinderGeometry(5, 5.4, 1, 24),
+    fountain: new THREE.CylinderGeometry(4.4, 4.4, 0.3, 24),
+    jet: new THREE.CylinderGeometry(0.5, 1.2, 3.4, 12),
+    railX: new THREE.BoxGeometry(BLOCK, 1, 0.25),
+    railZ: new THREE.BoxGeometry(0.25, 1, BLOCK),
+    quayX: new THREE.BoxGeometry(BLOCK + 1.4, 4.4, 0.7),
+    quayZ: new THREE.BoxGeometry(0.7, 4.4, BLOCK + 1.4),
+    lake: new THREE.PlaneGeometry(BLOCK + 0.6, BLOCK + 0.6),
+    glow: new THREE.PlaneGeometry(17, 17),
+    lotWallX: new THREE.BoxGeometry(BLOCK - SIDEWALK * 2, 0.7, 0.5),
+    lotWallZ: new THREE.BoxGeometry(0.5, 0.7, BLOCK - SIDEWALK * 2),
+    lotPole: new THREE.CylinderGeometry(0.14, 0.18, 7, 6),
+    lotHead: new THREE.BoxGeometry(1.5, 0.3, 0.7),
+    mallSign: new THREE.BoxGeometry(6, 1.5, 0.4),
+    tlPole: new THREE.CylinderGeometry(0.09, 0.12, 4.8, 6),
+    tlHead: new THREE.BoxGeometry(0.34, 0.95, 0.3),
+    tlDot: new THREE.BoxGeometry(0.2, 0.2, 0.06),
+    bench: new THREE.BoxGeometry(1.7, 0.16, 0.55),
+    benchBack: new THREE.BoxGeometry(1.7, 0.5, 0.12),
+    bin: new THREE.CylinderGeometry(0.3, 0.26, 0.9, 8),
+    hedgeX: new THREE.BoxGeometry(BLOCK - SIDEWALK * 2, 0.85, 0.7),
+    hedgeZ: new THREE.BoxGeometry(0.7, 0.85, BLOCK - SIDEWALK * 2)
+  };
+
+  cached = { mats, geos, win, env };
+  return cached as Assets;
+}
+
+type Assets = {
+  mats: {
+    [k: string]: any;
+    facades: THREE.MeshLambertMaterial[];
+    merged: THREE.MeshLambertMaterial;
+    glow: THREE.MeshBasicMaterial;
+  };
+  geos: { [k: string]: THREE.BufferGeometry };
+  win: { map: THREE.Texture; emissive: THREE.Texture };
+  env: THREE.Texture;
+};
+export type CityAssets = Assets;
+
+/** Per-face UV scaling so window tiles keep a constant real-world size. */
+export function buildingGeo(w: number, h: number, d: number) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  const uv = g.attributes.uv;
+  for (let k = 0; k < 24; k++) {
+    const face = Math.floor(k / 4);
+    let su = 1, sv = 1;
+    if (face === 0 || face === 1) { su = d / 12; sv = h / 12; }
+    else if (face === 4 || face === 5) { su = w / 12; sv = h / 12; }
+    uv.setXY(k, uv.getX(k) * su, uv.getY(k) * sv);
+  }
+  return g;
+}
+
+/** Distant blocks collapse into one mesh with per-vertex colour: 1 draw call instead of 12. */
+export function mergeBoxes(list: { w: number; h: number; d: number; x: number; y: number; z: number; color: number }[]) {
+  const subs = list.map((it) => {
+    const g = buildingGeo(it.w, it.h, it.d).toNonIndexed();
+    g.translate(it.x, it.y, it.z);
+    return { g, c: new THREE.Color(it.color) };
+  });
+  const total = subs.reduce((n, s) => n + s.g.attributes.position.count, 0);
+  const pos = new Float32Array(total * 3);
+  const nor = new Float32Array(total * 3);
+  const uv = new Float32Array(total * 2);
+  const col = new Float32Array(total * 3);
+  let off = 0;
+  for (const s of subs) {
+    const a = s.g.attributes;
+    const n = a.position.count;
+    pos.set(a.position.array as Float32Array, off * 3);
+    nor.set(a.normal.array as Float32Array, off * 3);
+    uv.set(a.uv.array as Float32Array, off * 2);
+    for (let q = 0; q < n; q++) {
+      col[(off + q) * 3] = s.c.r; col[(off + q) * 3 + 1] = s.c.g; col[(off + q) * 3 + 2] = s.c.b;
+    }
+    off += n;
+    s.g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return out;
+}

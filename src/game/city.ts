@@ -1,0 +1,459 @@
+import * as THREE from 'three';
+import { BLOCK, CELL, PALETTE, SIDEWALK, STREET } from './config';
+import { hash3, heightAt, mulberry32 } from './rng';
+import { buildingGeo, createAssets, mergeBoxes } from './textures';
+import { cloneVehicle, pickHue, VehicleKind } from './vehicles';
+
+export type BlockType = 'canal' | 'avenue' | 'mall' | 'parking' | 'tower' | 'build' | 'park' | 'plaza' | 'low';
+
+export type BoxCollider = { pos: [number, number, number]; half: [number, number, number] };
+export type SignalDef = { nx: number; nz: number; axisX: boolean; dots: THREE.Mesh[] };
+
+export type ChunkData = {
+  key: string;
+  i: number;
+  j: number;
+  lod: number;
+  type: BlockType;
+  group: THREE.Group;
+  boxes: BoxCollider[];
+  ground: THREE.BufferGeometry | null;
+  signals: SignalDef[];
+  dispose: () => void;
+};
+
+const PARK_KINDS: VehicleKind[] = ['sedan', 'sedan', 'suv', 'pickup', 'van', 'taxi'];
+
+/** Low frequency layer: districts, so towers cluster and suburbs spread out. */
+function district(seed: number, i: number, j: number) {
+  return mulberry32(hash3(seed, Math.floor(i / 6) + 1000, Math.floor(j / 6) + 1000))();
+}
+function bandPick(seed: number, v: number, salt: number) {
+  const band = Math.floor(v / 16);
+  const r = mulberry32(hash3(seed, band, salt));
+  const pick = Math.floor(r() * 16);
+  const on = r() < 0.42;
+  return on && v - band * 16 === pick;
+}
+export const isCanalCol = (seed: number, i: number) => bandPick(seed, i, 777);
+export const isCanalRow = (seed: number, j: number) => bandPick(seed, j, 888);
+const isAveA = (seed: number, i: number, j: number) => mulberry32(hash3(seed, i + j, 4242))() < 0.05;
+const isAveB = (seed: number, i: number, j: number) => mulberry32(hash3(seed, i - j, 4343))() < 0.05;
+
+export function blockTypeAt(seed: number, i: number, j: number): BlockType {
+  const rnd = mulberry32(hash3(seed, i, j));
+  const dens = district(seed, i, j);
+  const r = rnd();
+  if (isCanalCol(seed, i) || isCanalRow(seed, j)) return 'canal';
+  if (isAveA(seed, i, j) || isAveB(seed, i, j)) return 'avenue';
+  if (r < 0.06 && dens < 0.62) return 'mall';
+  if (r < 0.14 && dens < 0.72) return 'parking';
+  if (r < 0.12 + dens * 0.45) return dens > 0.55 ? 'tower' : 'build';
+  if (r < 0.62 + dens * 0.25) return 'build';
+  if (r < 0.84) return 'park';
+  if (r < 0.92) return 'plaza';
+  return 'low';
+}
+
+/** A terrain-following patch of ground. Also reused as the physics trimesh. */
+function patch(cx: number, cz: number, w: number, l: number, yaw: number, segW: number, segL: number, yOff: number, uvBox?: number[]) {
+  const g = new THREE.PlaneGeometry(w, l, segW, segL);
+  const p = g.attributes.position;
+  const uv = g.attributes.uv;
+  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  for (let k = 0; k < p.count; k++) {
+    const px = p.getX(k), py = -p.getY(k);
+    const rx = px * cs - py * sn, rz = px * sn + py * cs;
+    const wx = cx + rx, wz = cz + rz;
+    p.setXYZ(k, wx, heightAt(wx, wz) + yOff, wz);
+    if (uvBox) uv.setXY(k, uvBox[0] + uv.getX(k) * (uvBox[1] - uvBox[0]), uvBox[2] + uv.getY(k) * (uvBox[3] - uvBox[2]));
+  }
+  const idx = g.index!.array as ArrayLike<number>;
+  const a = new THREE.Vector3().fromBufferAttribute(p as THREE.BufferAttribute, idx[0]);
+  const b = new THREE.Vector3().fromBufferAttribute(p as THREE.BufferAttribute, idx[1]);
+  const c = new THREE.Vector3().fromBufferAttribute(p as THREE.BufferAttribute, idx[2]);
+  if (b.sub(a).cross(c.sub(a)).y < 0) {
+    const arr = g.index!.array as any;
+    for (let k = 0; k < arr.length; k += 3) { const t = arr[k + 1]; arr[k + 1] = arr[k + 2]; arr[k + 2] = t; }
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+export function generateChunk(seed: number, i: number, j: number, lod: number): ChunkData {
+  const { mats, geos } = createAssets();
+  const rnd = mulberry32(hash3(seed, i, j));
+  const detail = lod === 2;
+  const far = lod === 0;
+  const group = new THREE.Group();
+  const boxes: BoxCollider[] = [];
+  const trash: THREE.BufferGeometry[] = [];
+  const signals: SignalDef[] = [];
+
+  const ox = i * CELL, oz = j * CELL;
+  const cx = ox + CELL / 2, cz = oz + CELL / 2;
+  const hc = heightAt(cx, cz);
+  const inner = BLOCK - SIDEWALK * 2;
+  const dens = district(seed, i, j);
+  const type = blockTypeAt(seed, i, j);
+  const segs = detail ? 10 : far ? 3 : 5;
+
+  const trees: { x: number; z: number; s: number }[] = [];
+  const lamps: { x: number; z: number }[] = [];
+  const lotCars: { x: number; z: number; half: number; n: number; yaw: number }[] = [];
+  const farBoxes: any[] = [];
+
+  let ground: THREE.BufferGeometry | null = null;
+
+  const flat = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, yaw = 0, shadow = false) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    if (yaw) m.rotation.y = yaw;
+    m.receiveShadow = shadow;
+    group.add(m);
+    return m;
+  };
+
+  if (type === 'canal') {
+    const f = STREET / 2 / CELL;
+    const strips = [
+      patch(cx, oz + STREET / 4, CELL, STREET / 2, 0, segs, 1, 0, [0, 1, 1 - f, 1]),
+      patch(cx, oz + CELL - STREET / 4, CELL, STREET / 2, 0, segs, 1, 0, [0, 1, 0, f]),
+      patch(ox + STREET / 4, cz, STREET / 2, CELL, 0, 1, segs, 0, [0, f, 0, 1]),
+      patch(ox + CELL - STREET / 4, cz, STREET / 2, CELL, 0, 1, segs, 0, [1 - f, 1, 0, 1])
+    ];
+    strips.forEach((g) => {
+      trash.push(g);
+      const m = new THREE.Mesh(g, mats.tile);
+      m.receiveShadow = true;
+      group.add(m);
+    });
+    ground = strips[0];
+    const qz1 = oz + STREET / 2, qz2 = oz + CELL - STREET / 2;
+    const qx1 = ox + STREET / 2, qx2 = ox + CELL - STREET / 2;
+    flat(geos.quayX, mats.deck, cx, heightAt(cx, qz1) - 2.1, qz1);
+    flat(geos.quayX, mats.deck, cx, heightAt(cx, qz2) - 2.1, qz2);
+    flat(geos.quayZ, mats.deck, qx1, heightAt(qx1, cz) - 2.1, cz);
+    flat(geos.quayZ, mats.deck, qx2, heightAt(qx2, cz) - 2.1, cz);
+    const lake = new THREE.Mesh(geos.lake, mats.water);
+    lake.rotation.x = -Math.PI / 2;
+    lake.position.set(cx, hc - 2.9, cz);
+    group.add(lake);
+    flat(geos.railX, mats.rail, cx, heightAt(cx, qz1) + 0.6, qz1);
+    flat(geos.railX, mats.rail, cx, heightAt(cx, qz2) + 0.6, qz2);
+    flat(geos.railZ, mats.rail, qx1, heightAt(qx1, cz) + 0.6, cz);
+    flat(geos.railZ, mats.rail, qx2, heightAt(qx2, cz) + 0.6, cz);
+    // the water is a wall as far as physics is concerned
+    boxes.push({ pos: [cx, hc - 1, cz], half: [BLOCK / 2, 2.4, BLOCK / 2] });
+  } else {
+    const tg = patch(cx, cz, CELL, CELL, 0, segs, segs, 0);
+    trash.push(tg);
+    ground = tg;
+    const tile = new THREE.Mesh(tg, type === 'avenue' ? mats.tilePlain : mats.tile);
+    tile.receiveShadow = true;
+    group.add(tile);
+    for (let k = 0; k < 4; k++) {
+      const sx = cx + (k % 2 ? 1 : -1) * (BLOCK / 2 - 1.2);
+      const sz = cz + (k < 2 ? 1 : -1) * (BLOCK / 2 - 1.2);
+      let ok = true;
+      if (type === 'avenue') {
+        if (isAveA(seed, i, j) && Math.abs(sx - cx + (sz - cz)) / 1.4142 < STREET / 2 + 3) ok = false;
+        if (isAveB(seed, i, j) && Math.abs(sx - cx - (sz - cz)) / 1.4142 < STREET / 2 + 3) ok = false;
+      }
+      if (ok) lamps.push({ x: sx, z: sz });
+    }
+  }
+
+  if (type === 'avenue') {
+    const yaws: number[] = [];
+    if (isAveA(seed, i, j)) yaws.push(Math.PI / 4);
+    if (isAveB(seed, i, j)) yaws.push(-Math.PI / 4);
+    const nearAve = (x: number, z: number, margin: number) => {
+      const a = isAveA(seed, i, j) && Math.abs(x - cx + (z - cz)) / 1.4142 < STREET / 2 + margin;
+      const b = isAveB(seed, i, j) && Math.abs(x - cx - (z - cz)) / 1.4142 < STREET / 2 + margin;
+      return a || b;
+    };
+    for (const yaw of yaws) {
+      const sg = patch(cx, cz, STREET, CELL * 1.4142 + 1, yaw, 2, segs + 4, 0.2);
+      trash.push(sg);
+      const m = new THREE.Mesh(sg, mats.strip);
+      m.receiveShadow = true;
+      group.add(m);
+    }
+    let tries = 0;
+    const want = 8 + Math.floor(rnd() * 6);
+    while (trees.length < want && tries < 60) {
+      tries++;
+      const tx = cx + (rnd() * 2 - 1) * (BLOCK / 2 - 2);
+      const tz = cz + (rnd() * 2 - 1) * (BLOCK / 2 - 2);
+      if (!nearAve(tx, tz, 3.2)) trees.push({ x: tx, z: tz, s: 0.8 + rnd() * 0.6 });
+    }
+  } else if (type === 'parking' || type === 'mall') {
+    const half = inner / 2;
+    flat(geos.inner, mats.lotFloor, cx, hc - 0.16, cz, 0, true);
+    boxes.push({ pos: [cx, hc + 0.04, cz], half: [half, 0.4, half] });
+    if (type === 'parking') {
+      const gap = Math.floor(rnd() * 4);
+      if (gap !== 0) flat(geos.lotWallX, mats.stone, cx, hc + 0.65, cz - half, 0, true);
+      if (gap !== 1) flat(geos.lotWallX, mats.stone, cx, hc + 0.65, cz + half, 0, true);
+      if (gap !== 2) flat(geos.lotWallZ, mats.stone, cx - half, hc + 0.65, cz, 0, true);
+      if (gap !== 3) flat(geos.lotWallZ, mats.stone, cx + half, hc + 0.65, cz, 0, true);
+      for (let k = 0; k < 2; k++) {
+        const px = cx + (k ? 1 : -1) * half * 0.5;
+        flat(geos.lotPole, mats.pole, px, heightAt(px, cz) + 3.5, cz, 0, true);
+        flat(geos.lotHead, mats.bulb, px, heightAt(px, cz) + 6.9, cz);
+      }
+      lotCars.push({ x: cx, z: cz, half, n: 8 + Math.floor(rnd() * 6), yaw: rnd() < 0.5 ? 0 : Math.PI / 2 });
+    } else {
+      const mw = inner * 0.86, md = inner * 0.5, mh = 9 + rnd() * 4;
+      const side = rnd() < 0.5 ? -1 : 1;
+      const mz = cz + side * (half - md / 2);
+      const mg = buildingGeo(mw, mh, md);
+      trash.push(mg);
+      const mesh = new THREE.Mesh(mg, mats.mallWall);
+      mesh.position.set(cx, heightAt(cx, mz) + mh / 2, mz);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      group.add(mesh);
+      const bandG = new THREE.BoxGeometry(mw + 0.4, 1.6, md + 0.4);
+      trash.push(bandG);
+      const band = new THREE.Mesh(bandG, mats.mallBand);
+      band.position.set(cx, heightAt(cx, mz) + mh - 1.4, mz);
+      group.add(band);
+      const frontZ = mz - side * (md / 2 + 0.2);
+      const glassG = new THREE.BoxGeometry(mw * 0.72, 4.4, 0.35);
+      trash.push(glassG);
+      const glass = new THREE.Mesh(glassG, mats.mallGlass);
+      glass.position.set(cx, heightAt(cx, frontZ) + 2.4, frontZ);
+      group.add(glass);
+      flat(geos.mallSign, mats.sign, cx, heightAt(cx, mz) + mh + 1.1, mz);
+      boxes.push({ pos: [cx, heightAt(cx, mz) + mh / 2, mz], half: [mw / 2, mh / 2, md / 2] });
+      lotCars.push({ x: cx, z: cz - side * half * 0.45, half: half * 0.75, n: 5 + Math.floor(rnd() * 4), yaw: 0 });
+    }
+  } else if (type !== 'canal') {
+    if (!far) flat(geos.curb, mats.curb, cx, hc - 0.23, cz);
+    flat(geos.sidewalk, mats.sidewalk, cx, hc - 0.2, cz, 0, true);
+    boxes.push({ pos: [cx, hc - 0.2, cz], half: [BLOCK / 2, 0.5, BLOCK / 2] });
+
+    const isGreen = type === 'park' || type === 'plaza';
+    if (isGreen) {
+      flat(geos.inner, type === 'park' ? mats.grass : mats.plaza, cx, hc - 0.16, cz, 0, true);
+      if (type === 'plaza') {
+        const basin = new THREE.Mesh(geos.basin, mats.stone);
+        basin.position.set(cx, hc + 0.8, cz); basin.castShadow = true; group.add(basin);
+        const water = new THREE.Mesh(geos.fountain, mats.water);
+        water.position.set(cx, hc + 1.25, cz); group.add(water);
+        const jet = new THREE.Mesh(geos.jet, mats.stone);
+        jet.position.set(cx, hc + 2.5, cz); jet.castShadow = true; group.add(jet);
+        boxes.push({ pos: [cx, hc + 1.2, cz], half: [5.4, 1.2, 5.4] });
+        for (let k = 0; k < 4; k++) {
+          trees.push({ x: cx + (k % 2 ? 1 : -1) * (inner / 2 - 2), z: cz + (k < 2 ? 1 : -1) * (inner / 2 - 2), s: 1.1 });
+        }
+      } else {
+        const count = 7 + Math.floor(rnd() * 7);
+        for (let k = 0; k < count; k++) {
+          trees.push({
+            x: cx + (rnd() * 2 - 1) * (inner / 2 - 2.5),
+            z: cz + (rnd() * 2 - 1) * (inner / 2 - 2.5),
+            s: 0.8 + rnd() * 0.9
+          });
+        }
+      }
+    } else {
+      flat(geos.inner, mats.lot, cx, hc - 0.16, cz, 0, true);
+      let hBase = type === 'tower' ? 24 + rnd() * 30 : type === 'low' ? 4 + rnd() * 3 : 7 + rnd() * 13;
+      hBase *= 1 + dens * 0.5;
+      const layout = rnd();
+
+      const addB = (x: number, z: number, w: number, d: number, h: number) => {
+        const y = heightAt(x, z) + h / 2 - 1.05;
+        boxes.push({ pos: [x, y, z], half: [w / 2, h / 2 + 1.25, d / 2] });
+        if (far) {
+          farBoxes.push({ w, h: h + 2.5, d, x, y, z, color: PALETTE[Math.floor(rnd() * PALETTE.length)] });
+          return;
+        }
+        const geo = buildingGeo(w, h + 2.5, d);
+        trash.push(geo);
+        const side = mats.facades[Math.floor(rnd() * mats.facades.length)];
+        const mesh = new THREE.Mesh(geo, [side, side, mats.roof, mats.roof, side, side]);
+        mesh.position.set(x, y, z);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        group.add(mesh);
+        let topY = heightAt(x, z) + h + 0.2;
+        if (type === 'tower' && rnd() < 0.55) {
+          const g2 = buildingGeo(w * 0.62, h * 0.32, d * 0.62);
+          trash.push(g2);
+          const m2 = new THREE.Mesh(g2, [side, side, mats.roof, mats.roof, side, side]);
+          m2.position.set(x, topY + h * 0.16, z);
+          m2.castShadow = true;
+          group.add(m2);
+          topY += h * 0.32;
+        }
+        if (detail && rnd() < 0.6) {
+          const hv = new THREE.Mesh(geos.hvac, mats.hvac);
+          hv.position.set(x + (rnd() - 0.5) * w * 0.4, topY + 0.5, z + (rnd() - 0.5) * d * 0.4);
+          hv.castShadow = true;
+          group.add(hv);
+        }
+      };
+
+      if (type === 'tower' || layout < 0.3) {
+        addB(cx, cz, inner * (0.55 + rnd() * 0.3), inner * (0.55 + rnd() * 0.3), hBase);
+      } else if (layout < 0.65) {
+        const vert = rnd() < 0.5;
+        for (let k = 0; k < 2; k++) {
+          const off = (k ? 1 : -1) * inner / 4;
+          const hh = hBase * (0.7 + rnd() * 0.6);
+          if (vert) addB(cx + off, cz, inner / 2 - 1.5, inner * (0.6 + rnd() * 0.3), hh);
+          else addB(cx, cz + off, inner * (0.6 + rnd() * 0.3), inner / 2 - 1.5, hh);
+        }
+      } else {
+        for (let k = 0; k < 4; k++) {
+          addB(cx + (k % 2 ? 1 : -1) * inner / 4, cz + (k < 2 ? 1 : -1) * inner / 4, inner / 2 - 2, inner / 2 - 2, hBase * (0.6 + rnd() * 0.8));
+        }
+      }
+      if (rnd() < 0.6) {
+        const side = rnd() < 0.5 ? 1 : -1;
+        for (let k = -1; k <= 1; k += 2) {
+          trees.push({ x: cx + k * BLOCK * 0.25, z: cz + side * (BLOCK / 2 - 1.6), s: 0.7 + rnd() * 0.3 });
+        }
+      }
+      if (far && farBoxes.length) {
+        const mg = mergeBoxes(farBoxes);
+        trash.push(mg);
+        group.add(new THREE.Mesh(mg, mats.merged));
+      }
+    }
+  }
+
+  // props only near the player
+  if (detail && type !== 'canal') {
+    const m4 = new THREE.Matrix4();
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+
+    if (trees.length) {
+      const trunkI = new THREE.InstancedMesh(geos.trunk, mats.trunk, trees.length);
+      const leafI = new THREE.InstancedMesh(geos.leaf, mats.leaf, trees.length);
+      const leafI2 = new THREE.InstancedMesh(geos.leaf, mats.leaf2, trees.length);
+      trees.forEach((t, k) => {
+        const ty = heightAt(t.x, t.z);
+        scl.set(t.s, t.s, t.s);
+        pos.set(t.x, ty + 1.2 * t.s + 0.3, t.z); m4.compose(pos, quat, scl); trunkI.setMatrixAt(k, m4);
+        pos.set(t.x, ty + 3 * t.s + 0.3, t.z); m4.compose(pos, quat, scl); leafI.setMatrixAt(k, m4);
+        scl.set(t.s * 0.7, t.s * 0.7, t.s * 0.7);
+        pos.set(t.x + 0.6 * t.s, ty + 3.9 * t.s + 0.3, t.z - 0.3 * t.s); m4.compose(pos, quat, scl); leafI2.setMatrixAt(k, m4);
+        boxes.push({ pos: [t.x, ty + 1.4 * t.s, t.z], half: [0.45 * t.s, 1.5 * t.s, 0.45 * t.s] });
+      });
+      trunkI.castShadow = leafI.castShadow = true;
+      group.add(trunkI, leafI, leafI2);
+    }
+
+    if (lamps.length) {
+      const poleI = new THREE.InstancedMesh(geos.pole, mats.pole, lamps.length);
+      const bulbI = new THREE.InstancedMesh(geos.bulb, mats.bulb, lamps.length);
+      scl.set(1, 1, 1);
+      lamps.forEach((l, k) => {
+        const ly = heightAt(l.x, l.z);
+        pos.set(l.x, ly + 3.1, l.z); m4.compose(pos, quat, scl); poleI.setMatrixAt(k, m4);
+        pos.set(l.x, ly + 6.1, l.z); m4.compose(pos, quat, scl); bulbI.setMatrixAt(k, m4);
+        const glow = new THREE.Mesh(geos.glow, mats.glow);
+        glow.position.set(l.x, ly + 0.09, l.z);
+        glow.rotation.x = -Math.PI / 2;
+        group.add(glow);
+      });
+      poleI.castShadow = true;
+      group.add(poleI, bulbI);
+    }
+
+    if (type !== 'avenue') {
+      for (let k = 0; k < 4; k++) {
+        const sgn = k % 2 ? 1 : -1;
+        const sgn2 = k < 2 ? 1 : -1;
+        const nodeX = ox + (sgn > 0 ? CELL : 0);
+        const nodeZ = oz + (sgn2 > 0 ? CELL : 0);
+        const tlx = cx + sgn * (BLOCK / 2 + 1.2);
+        const tlz = cz + sgn2 * (BLOCK / 2 + 1.2);
+        const y = heightAt(tlx, tlz);
+        flat(geos.tlPole, mats.metal, tlx, y + 2.4, tlz, 0, true);
+        flat(geos.tlHead, mats.roof, tlx, y + 5.0, tlz);
+        const dots = [
+          flat(geos.tlDot, mats.tlRed, tlx, y + 5.3, tlz - 0.2),
+          flat(geos.tlDot, mats.tlAmber, tlx, y + 5.0, tlz - 0.2),
+          flat(geos.tlDot, mats.tlGreen, tlx, y + 4.7, tlz - 0.2)
+        ];
+        signals.push({ nx: nodeX, nz: nodeZ, axisX: k < 2, dots });
+      }
+    }
+
+    // parked cars: a few on the kerb, the rest inside lots
+    const parked: { x: number; z: number; yaw: number }[] = [];
+    if (type !== 'avenue') {
+      const sides = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+      for (const s of sides) {
+        if (rnd() < 0.82) continue;
+        const along = (rnd() - 0.5) * (BLOCK - 14);
+        const lane = BLOCK / 2 + 3.4;
+        if (s[0] === 0) parked.push({ x: cx + along, z: cz + s[1] * lane, yaw: Math.PI / 2 });
+        else parked.push({ x: cx + s[0] * lane, z: cz + along, yaw: 0 });
+      }
+    }
+    for (const lot of lotCars) {
+      const rows = 2;
+      const per = Math.ceil(lot.n / rows);
+      for (let q = 0; q < lot.n; q++) {
+        const rr = Math.floor(q / per), cc = q % per;
+        const offA = (cc - (per - 1) / 2) * 2.7;
+        const offB = (rr - (rows - 1) / 2) * 5.6;
+        const lx = lot.yaw === 0 ? lot.x + offA : lot.x + offB;
+        const lz = lot.yaw === 0 ? lot.z + offB : lot.z + offA;
+        if (Math.abs(lx - lot.x) > lot.half - 2.4 || Math.abs(lz - lot.z) > lot.half - 2.4) continue;
+        if (rnd() < 0.2) continue;
+        parked.push({ x: lx, z: lz, yaw: lot.yaw });
+      }
+    }
+    for (const pk of parked) {
+      const kind = PARK_KINDS[Math.floor(rnd() * PARK_KINDS.length)];
+      const v = cloneVehicle(kind, pickHue(kind, rnd()));
+      v.position.set(pk.x, heightAt(pk.x, pk.z) + 0.35, pk.z);
+      v.rotation.y = pk.yaw;
+      group.add(v);
+      const ex = pk.yaw === 0 ? 1.1 : 2.4;
+      const ez = pk.yaw === 0 ? 2.4 : 1.1;
+      boxes.push({ pos: [pk.x, heightAt(pk.x, pk.z) + 1, pk.z], half: [ex, 0.9, ez] });
+    }
+  }
+
+  return {
+    key: `${i},${j}`,
+    i,
+    j,
+    lod,
+    type,
+    group,
+    boxes,
+    ground,
+    signals,
+    dispose: () => {
+      trash.forEach((g) => g.dispose());
+      group.traverse((o: any) => { if (o.isInstancedMesh) o.dispose(); });
+    }
+  };
+}
+
+/** Facade materials need the shared window texture, so they are built once here. */
+export function ensureFacades() {
+  const { mats, win } = createAssets();
+  if (mats.facades.length) return;
+  for (const hex of PALETTE) {
+    mats.facades.push(
+      new THREE.MeshLambertMaterial({
+        color: hex,
+        map: win.map,
+        emissive: 0xffffff,
+        emissiveMap: win.emissive,
+        emissiveIntensity: 0
+      })
+    );
+  }
+}
