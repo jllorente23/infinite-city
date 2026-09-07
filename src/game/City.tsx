@@ -11,6 +11,7 @@ import { useCityProps } from './props';
 import { useCityNature } from './nature';
 import { useCityBuildings } from './buildings';
 import { useCityIndustrial } from './industrial';
+import { useCityRoads } from './roads';
 import { useCityCars } from './carModels';
 import { signalState } from './signals';
 
@@ -47,6 +48,7 @@ export function City() {
   useCityNature();
   useCityBuildings();
   useCityIndustrial();
+  useCityRoads();
   useCityCars();
 
   const [cells, setCells] = useState<Slot[]>(() =>

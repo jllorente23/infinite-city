@@ -1,8 +1,12 @@
 /** A block is big enough to hold a grid of lots, so a city block reads as a
  *  row of buildings rather than one object dropped in the middle. */
-export const BLOCK = 80;
+export const BLOCK = 84;
 export const STREET = 14;
 export const CELL = BLOCK + STREET;
+/** Kenney's road tiles are square and as wide as the roadway, so a cell edge
+ *  has to be a whole number of them: 98 / 14 = 7. */
+export const ROAD_TILE = STREET;
+export const ROAD_TILES_PER_EDGE = CELL / ROAD_TILE;
 export const SIDEWALK = 4;
 /** Lots per side of a block. The interior lot of an odd grid becomes a yard. */
 export const LOT_GRID = [2, 3, 3, 4];

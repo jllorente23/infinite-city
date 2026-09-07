@@ -2,7 +2,7 @@
  * the deck must sit where the model puts its roadway, and open water must stay
  * blocked. Run with `npx tsx scripts/check-bridge.ts`. */
 import { blockTypeAt, canalAxis, canalBlocks, canalCrossing, hasSignals, isDriveable, roadHeightAt, signalPosts } from '../src/game/city';
-import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, LOT_GRID, SIDEWALK, STREET } from '../src/game/config';
+import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, LOT_GRID, ROAD_TILE, ROAD_TILES_PER_EDGE, SIDEWALK, STREET } from '../src/game/config';
 import { BRIDGE_TOP } from '../src/game/props';
 import { heightAt } from '../src/game/rng';
 
@@ -150,6 +150,38 @@ for (const [x, z] of wet) {
 }
 console.log(`${canalCells} canal cells in a 181x181 sweep; ${rescued} of ${wet.length} sampled points are open water, all with a dry landing`);
 if (!rescued) fail('the water sampling never found a canal, so this proves nothing');
+
+// 9. Road tiles have to pave a street edge exactly, with no gap and no overlap.
+if (CELL % ROAD_TILE !== 0) fail(`a cell edge is ${CELL / ROAD_TILE} tiles, which does not divide evenly`);
+const covered: [number, number][] = [[-ROAD_TILE / 2, ROAD_TILE / 2]];
+for (let k = 1; k < ROAD_TILES_PER_EDGE; k++) {
+  covered.push([k * ROAD_TILE - ROAD_TILE / 2, k * ROAD_TILE + ROAD_TILE / 2]);
+}
+covered.push([CELL - ROAD_TILE / 2, CELL + ROAD_TILE / 2]);
+for (let k = 1; k < covered.length; k++) {
+  if (Math.abs(covered[k][0] - covered[k - 1][1]) > 1e-9) fail(`road tiles ${k - 1} and ${k} do not meet`);
+}
+console.log(`\na ${CELL} m street runs on ${ROAD_TILES_PER_EDGE} tiles of ${ROAD_TILE} m, meeting edge to edge`);
+
+// The tilted tile must track the ground closely or it floats over the kerb.
+let gapSum = 0, gapWorst = 0, samples = 0;
+for (let x = -600; x < 600; x += 37) {
+  for (let z = -600; z < 600; z += 37) {
+    const h = heightAt(x, z);
+    const gx = (heightAt(x + ROAD_TILE / 2, z) - heightAt(x - ROAD_TILE / 2, z)) / ROAD_TILE;
+    const gz = (heightAt(x, z + ROAD_TILE / 2) - heightAt(x, z - ROAD_TILE / 2)) / ROAD_TILE;
+    let local = 0;
+    for (const a of [-1, 1]) {
+      for (const b of [-1, 1]) {
+        const dx = (a * ROAD_TILE) / 2, dz = (b * ROAD_TILE) / 2;
+        local = Math.max(local, Math.abs(heightAt(x + dx, z + dz) - (h + gx * dx + gz * dz)));
+      }
+    }
+    gapSum += local; gapWorst = Math.max(gapWorst, local); samples++;
+  }
+}
+console.log(`tilted tiles sit ${(gapSum / samples).toFixed(3)} m off the ground on average, ${gapWorst.toFixed(3)} m at worst`);
+if (gapSum / samples > 0.12) fail('road tiles float too far off the terrain');
 
 console.log(bad ? `\n${bad} PROBLEM(S)` : '\nall checks passed');
 process.exit(bad ? 1 : 0);

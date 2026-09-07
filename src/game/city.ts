@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_GRID, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, SIDEWALK, STREET } from './config';
+import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_GRID, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, ROAD_TILE, ROAD_TILES_PER_EDGE, SIDEWALK, STREET } from './config';
 import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
 import { BRIDGE_KERB, BRIDGE_SLAB, BRIDGE_TOP, cityProps, LAMP_HEAD, PILLAR_TOP, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
 import { cityIndustrial, CONTAINER_KINDS, IndustrialKind, NAVE_KINDS, STACK_KINDS, TANK_KINDS } from './industrial';
+import { cityRoads, RoadKind } from './roads';
 import { cityNature, GROUND_KINDS, KERB_KINDS, NatureKind, TREE_KINDS } from './nature';
 import { makeSign, SignKind } from './signs';
 import { cityBuildings, HOUSE_KINDS, MID_KINDS, TOWER_KINDS, BuildingKind } from './buildings';
@@ -544,16 +545,72 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     trash.push(ground);
     addWater(axis);
 
-    // Parapet along the whole embankment, open only where a bridge lands.
-    const wallH = 1.1;
-    const openR = STREET / 2 + 1.2;
-    const wallRun = (alongZ: boolean, edge: number, opens: number[]) => {
-      const lo = alongZ ? oz : ox;
+    /** Stretches of an embankment, cut open where a bridge lands on it. */
+    const runs = (lo: number, opens: number[], openR: number) => {
       const cuts = [lo, ...opens.flatMap((o) => [o - openR, o + openR]), lo + CELL].sort((a, b) => a - b);
+      const out: [number, number][] = [];
       for (let k = 0; k < cuts.length; k += 2) {
         const a = Math.max(lo, cuts[k]);
         const b = Math.min(lo + CELL, cuts[k + 1]);
-        if (b - a < 1.1) continue;
+        if (b - a > 1.1) out.push([a, b]);
+      }
+      return out;
+    };
+
+    const wallH = 1.1;
+    /** Waterfront: a paved walk against the parapet, then lawn out to the
+     *  street. Left as bare ground the bank read as a grey car park. */
+    const PROM = 6;
+    const embankment = (alongZ: boolean, edge: number, inward: number, opens: number[]) => {
+      const lo = alongZ ? oz : ox;
+      // Lawn runs from the back of the walk out to the kerb of the grid street.
+      const lawnNear = PROM;
+      const lawnFar = bankW - STREET / 2;
+      for (const [a, b] of runs(lo, opens, STREET / 2)) {
+        const at = (a + b) / 2;
+        const len = b - a;
+        const band = (mat: THREE.Material, near: number, far: number, lift: number) => {
+          if (far - near < 0.5) return;
+          const mid = edge + inward * (near + far) / 2;
+          const g = new THREE.PlaneGeometry(alongZ ? far - near : len, alongZ ? len : far - near);
+          g.rotateX(-Math.PI / 2);
+          trash.push(g);
+          const x = alongZ ? mid : at;
+          const z = alongZ ? at : mid;
+          const m = new THREE.Mesh(g, mat);
+          m.position.set(x, heightAt(x, z) + lift, z);
+          m.receiveShadow = true;
+          group.add(m);
+        };
+        band(mats.sidewalk, 0.2, lawnNear, 0.05);
+        band(mats.grass, lawnNear, lawnFar, 0.04);
+
+        // Trees and benches face the water along the walk.
+        const n = Math.max(1, Math.floor(len / 12));
+        for (let k = 0; k < n; k++) {
+          const t = a + ((k + 0.5) * len) / n;
+          const tx = alongZ ? edge + inward * (lawnNear + 3) : t;
+          const tz = alongZ ? t : edge + inward * (lawnNear + 3);
+          if (!onDriveable(seed, tx, tz, 4)) {
+            trees.push({ x: tx, z: tz, s: 0.7 + rnd() * 0.3, kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)] });
+          }
+          const bx = alongZ ? edge + inward * (PROM - 1.8) : t + 4;
+          const bz = alongZ ? t + 4 : edge + inward * (PROM - 1.8);
+          if (rnd() < 0.5 && !onDriveable(seed, bx, bz, 2)) {
+            const ang = alongZ ? Math.PI / 2 : 0;
+            flat(geos.bench, mats.wood, bx, heightAt(bx, bz) + 0.42, bz, ang);
+            flat(geos.benchBack, mats.wood, bx, heightAt(bx, bz) + 0.72, bz, ang);
+          }
+        }
+        if (len > 20) {
+          const lx = alongZ ? edge + inward * (lawnNear - 1) : at;
+          const lz = alongZ ? at : edge + inward * (lawnNear - 1);
+          lamps.push({ x: lx, z: lz, yaw: alongZ ? propYaw(-inward, 0) : propYaw(0, -inward) });
+        }
+      }
+
+      // Parapet last, so it sits over the paving rather than under it.
+      for (const [a, b] of runs(lo, opens, STREET / 2 + 1.2)) {
         const at = (a + b) / 2;
         const len = b - a;
         const g = alongZ
@@ -574,18 +631,19 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         });
       }
     };
+
     if (axis === 'z' || axis === 'both') {
       const opens = [j, j + 1].filter((n) => canalCrossing(seed, n, CROSS_Z)).map((n) => n * CELL);
       for (const s of [-1, 1]) {
         flat(geos.quayZ, mats.deck, cx + s * half, hc - 2.1, cz);
-        wallRun(true, cx + s * half, opens);
+        embankment(true, cx + s * half, s, opens);
       }
     }
     if (axis === 'x' || axis === 'both') {
       const opens = [i, i + 1].filter((n) => canalCrossing(seed, n, CROSS_X)).map((n) => n * CELL);
       for (const s of [-1, 1]) {
         flat(geos.quayX, mats.deck, cx, hc - 2.1, cz + s * half);
-        wallRun(false, cz + s * half, opens);
+        embankment(false, cz + s * half, s, opens);
       }
     }
   } else if (type === 'highway') {
@@ -961,6 +1019,55 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         const mg = mergeBoxes(farBoxes);
         trash.push(mg);
         group.add(new THREE.Mesh(mg, mats.distant));
+      }
+    }
+  }
+
+  // Kenney's road tiles sit on top of the painted asphalt. A tile is flat, so
+  // each one is tilted to the terrain slope under it; measured across this
+  // terrain that leaves a worst corner about 5 cm out, which the slab hides.
+  if (!far) {
+    const tiles = cityRoads();
+    if (tiles) {
+      const place: Record<RoadKind, THREE.Matrix4[]> = { straight: [], crossroad: [], crossroadPath: [] };
+      const m4 = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const tilt = new THREE.Quaternion();
+      const nrm = new THREE.Vector3();
+      const one = new THREE.Vector3(1, 1, 1);
+      const at = new THREE.Vector3();
+      const H = ROAD_TILE / 2;
+
+      const drop = (kind: RoadKind, tx: number, tz: number, yaw: number) => {
+        // A raised bridge deck and open water both bring their own surface.
+        if (canalBlocks(seed, tx, tz)) return;
+        if (roadHeightAt(seed, tx, tz) > heightAt(tx, tz) + 0.05) return;
+        if (onHighwayDeck(seed, tx, tz)) return;
+        const gx = (heightAt(tx + H, tz) - heightAt(tx - H, tz)) / ROAD_TILE;
+        const gz = (heightAt(tx, tz + H) - heightAt(tx, tz - H)) / ROAD_TILE;
+        nrm.set(-gx, 1, -gz).normalize();
+        tilt.setFromUnitVectors(UP, nrm);
+        q.setFromAxisAngle(UP, yaw).premultiply(tilt);
+        at.set(tx, heightAt(tx, tz) + 0.02, tz);
+        place[kind].push(new THREE.Matrix4().compose(at, q, one));
+      };
+
+      // This cell owns the junction on its low corner and the two street runs
+      // leading away from it, so no tile is ever laid twice.
+      drop(hasSignals(seed, ox, oz) ? 'crossroadPath' : 'crossroad', ox, oz, 0);
+      for (let k = 1; k < ROAD_TILES_PER_EDGE; k++) {
+        drop('straight', ox + k * ROAD_TILE, oz, 0);
+        drop('straight', ox, oz + k * ROAD_TILE, Math.PI / 2);
+      }
+
+      for (const kind of Object.keys(place) as RoadKind[]) {
+        const list = place[kind];
+        if (!list.length) continue;
+        const inst = new THREE.InstancedMesh(tiles[kind].geometry, tiles[kind].material, list.length);
+        list.forEach((m, k) => inst.setMatrixAt(k, m));
+        inst.receiveShadow = true;
+        inst.frustumCulled = false;
+        group.add(inst);
       }
     }
   }
