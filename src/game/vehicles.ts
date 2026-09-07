@@ -66,6 +66,22 @@ export const HUES: Record<string, number[]> = {
   ambulance: [0xf4f3ee]
 };
 
+/** Liveries share a silhouette, so several kinds map onto the same profile. */
+export function specOf(kind: VehicleKind) {
+  const base = kind === 'taxi' || kind === 'police' ? 'sedan' : kind === 'ambulance' ? 'van' : kind;
+  return SPEC[base] || SPEC.sedan;
+}
+
+/** Tallest point of the side profile. Used to size the physics hull. */
+export function vehicleHeight(kind: VehicleKind) {
+  const spec = specOf(kind);
+  let top = 0;
+  for (const seg of spec.top) {
+    for (let i = 1; i < seg.length; i += 2) top = Math.max(top, seg[i]);
+  }
+  return top;
+}
+
 const UNIT = new THREE.BoxGeometry(1, 1, 1);
 const CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 16);
 const CYL8 = new THREE.CylinderGeometry(0.5, 0.5, 1, 8);

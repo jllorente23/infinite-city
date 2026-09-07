@@ -29,6 +29,26 @@ function finish(c: HTMLCanvasElement, wrap = false, aniso = 8) {
   return t;
 }
 
+let puff: string | null = null;
+/**
+ * Soft round puff used by the cloud billboards. Drawn here as a data URL so the
+ * sky never blocks on a network fetch for it.
+ */
+export function cloudPuffUrl() {
+  if (puff) return puff;
+  const px = 128, c = canvas(px);
+  const g = c.getContext('2d')!;
+  const grd = g.createRadialGradient(px / 2, px / 2, px * 0.03, px / 2, px / 2, px * 0.48);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.45, 'rgba(255,255,255,0.82)');
+  grd.addColorStop(0.78, 'rgba(255,255,255,0.3)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, px, px);
+  puff = c.toDataURL();
+  return puff;
+}
+
 /** One cell of asphalt: block platform in the middle, lane markings and zebras at the edges. */
 function tileTexture(plain: boolean) {
   const px = 1024, s = px / CELL;
@@ -39,21 +59,29 @@ function tileTexture(plain: boolean) {
     g.fillStyle = '#8f8a82'; g.fillRect(a - 0.9 * s, a - 0.9 * s, b - a + 1.8 * s, b - a + 1.8 * s);
     g.fillStyle = '#b9b6ae'; g.fillRect(a, a, b - a, b - a);
   }
-  g.strokeStyle = '#e6d28e'; g.lineWidth = 0.32 * s;
-  g.setLineDash([3 * s, 3 * s]);
-  for (const edge of [0, px]) {
-    g.beginPath(); g.moveTo(edge, 0); g.lineTo(edge, px); g.stroke();
-    g.beginPath(); g.moveTo(0, edge); g.lineTo(px, edge); g.stroke();
+  // Centreline. A cell only paints its two low edges, a half-open interval, so
+  // neighbouring cells never lay a second line over the same stretch of road.
+  // Each dash run also stops at the junction box, which is what used to leave a
+  // yellow cross painted across the middle of every intersection.
+  const lane = 0.32 * s, dash = 3 * s;
+  g.fillStyle = '#e6d28e';
+  for (let d = a; d < b; d += dash * 2) {
+    const run = Math.min(dash, b - d);
+    g.fillRect(d, 0, run, lane);
+    g.fillRect(0, d, lane, run);
   }
-  g.setLineDash([]);
+
+  // Zebras. Four cells meet at every junction and each paints the half of the
+  // crossing that lands inside its own square, so the four approaches come out
+  // whole and drawn exactly once.
   g.fillStyle = '#dedcd4';
-  for (const [cx, cz] of [[0, 0], [px, 0], [0, px], [px, px]]) {
-    const half = (STREET / 2) * s, stripe = 0.85 * s, gap = 0.75 * s, len = 2.4 * s;
-    for (let m = -half + gap; m < half - gap; m += stripe + gap) {
-      g.fillRect(cx + m, cz - half - len, stripe, len);
-      g.fillRect(cx + m, cz + half, stripe, len);
-      g.fillRect(cx - half - len, cz + m, len, stripe);
-      g.fillRect(cx + half, cz + m, len, stripe);
+  const stripe = 0.85 * s, gap = 0.75 * s, len = 2.4 * s;
+  for (const [jx, jz] of [[0, 0], [px, 0], [0, px], [px, px]]) {
+    for (let m = -a + gap; m < a - gap; m += stripe + gap) {
+      g.fillRect(jx + m, jz - a - len, stripe, len);
+      g.fillRect(jx + m, jz + a, stripe, len);
+      g.fillRect(jx - a - len, jz + m, len, stripe);
+      g.fillRect(jx + a, jz + m, len, stripe);
     }
   }
   return finish(c);
@@ -196,6 +224,8 @@ export function createAssets() {
     leaf: new THREE.SphereGeometry(1.6, 9, 7),
     pole: new THREE.CylinderGeometry(0.11, 0.16, 5.6, 6),
     bulb: new THREE.SphereGeometry(0.36, 8, 6),
+    // the glTF lamp's luminaire is small, so its glowing lens is too
+    lampBulb: new THREE.SphereGeometry(0.18, 8, 6),
     hvac: new THREE.BoxGeometry(2, 1, 1.4),
     basin: new THREE.CylinderGeometry(5, 5.4, 1, 24),
     fountain: new THREE.CylinderGeometry(4.4, 4.4, 0.3, 24),
@@ -214,6 +244,8 @@ export function createAssets() {
     tlPole: new THREE.CylinderGeometry(0.09, 0.12, 4.8, 6),
     tlHead: new THREE.BoxGeometry(0.34, 0.95, 0.3),
     tlDot: new THREE.BoxGeometry(0.2, 0.2, 0.06),
+    // lens for the glTF signal, which is a good deal bigger than the boxy one
+    signalDot: new THREE.BoxGeometry(0.3, 0.3, 0.08),
     bench: new THREE.BoxGeometry(1.7, 0.16, 0.55),
     benchBack: new THREE.BoxGeometry(1.7, 0.5, 0.12),
     bin: new THREE.CylinderGeometry(0.3, 0.26, 0.9, 8),

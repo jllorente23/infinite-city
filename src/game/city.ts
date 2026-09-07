@@ -2,7 +2,10 @@ import * as THREE from 'three';
 import { BLOCK, CELL, PALETTE, SIDEWALK, STREET } from './config';
 import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
+import { cityProps, LAMP_HEAD, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
 import { cloneVehicle, pickHue, VehicleKind } from './vehicles';
+
+const UP = new THREE.Vector3(0, 1, 0);
 
 export type BlockType = 'canal' | 'avenue' | 'mall' | 'parking' | 'tower' | 'build' | 'park' | 'plaza' | 'low';
 
@@ -99,7 +102,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
   const segs = detail ? 10 : far ? 3 : 5;
 
   const trees: { x: number; z: number; s: number }[] = [];
-  const lamps: { x: number; z: number }[] = [];
+  const lamps: { x: number; z: number; yaw: number }[] = [];
   const lotCars: { x: number; z: number; half: number; n: number; yaw: number }[] = [];
   const farBoxes: any[] = [];
 
@@ -153,14 +156,19 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     tile.receiveShadow = true;
     group.add(tile);
     for (let k = 0; k < 4; k++) {
-      const sx = cx + (k % 2 ? 1 : -1) * (BLOCK / 2 - 1.2);
-      const sz = cz + (k < 2 ? 1 : -1) * (BLOCK / 2 - 1.2);
+      const ex = k % 2 ? 1 : -1;
+      const ez = k < 2 ? 1 : -1;
+      const sx = cx + ex * (BLOCK / 2 - 1.2);
+      const sz = cz + ez * (BLOCK / 2 - 1.2);
       let ok = true;
       if (type === 'avenue') {
         if (isAveA(seed, i, j) && Math.abs(sx - cx + (sz - cz)) / 1.4142 < STREET / 2 + 3) ok = false;
         if (isAveB(seed, i, j) && Math.abs(sx - cx - (sz - cz)) / 1.4142 < STREET / 2 + 3) ok = false;
       }
-      if (ok) lamps.push({ x: sx, z: sz });
+      // Lean each lamp's arm over a different one of the four streets, so a block
+      // lights all of its kerbs instead of doubling up on one.
+      const armAlongX = k === 0 || k === 3;
+      if (ok) lamps.push({ x: sx, z: sz, yaw: armAlongX ? propYaw(ex, 0) : propYaw(0, ez) });
     }
   }
 
@@ -349,24 +357,49 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       group.add(trunkI, leafI, leafI2);
     }
 
+    const props = cityProps();
+
     if (lamps.length) {
-      const poleI = new THREE.InstancedMesh(geos.pole, mats.pole, lamps.length);
-      const bulbI = new THREE.InstancedMesh(geos.bulb, mats.bulb, lamps.length);
+      // The glTF lamp is one mesh, so a block's lamps cost a single draw call.
+      const lampI = props
+        ? new THREE.InstancedMesh(props.lamp.geometry, props.lamp.material, lamps.length)
+        : new THREE.InstancedMesh(geos.pole, mats.pole, lamps.length);
+      const bulbI = new THREE.InstancedMesh(
+        props ? geos.lampBulb : geos.bulb,
+        mats.bulb,
+        lamps.length
+      );
+      const head = new THREE.Vector3();
       scl.set(1, 1, 1);
       lamps.forEach((l, k) => {
         const ly = heightAt(l.x, l.z);
-        pos.set(l.x, ly + 3.1, l.z); m4.compose(pos, quat, scl); poleI.setMatrixAt(k, m4);
-        pos.set(l.x, ly + 6.1, l.z); m4.compose(pos, quat, scl); bulbI.setMatrixAt(k, m4);
+        quat.setFromAxisAngle(UP, props ? l.yaw : 0);
+        pos.set(l.x, props ? ly : ly + 3.1, l.z);
+        m4.compose(pos, quat, scl);
+        lampI.setMatrixAt(k, m4);
+
+        // the bulb rides at the end of the arm, so it swings round with the yaw
+        head.set(0, props ? LAMP_HEAD.y : 6.1, props ? LAMP_HEAD.z : 0).applyAxisAngle(UP, props ? l.yaw : 0);
+        quat.identity();
+        pos.set(l.x + head.x, ly + head.y, l.z + head.z);
+        m4.compose(pos, quat, scl);
+        bulbI.setMatrixAt(k, m4);
+
         const glow = new THREE.Mesh(geos.glow, mats.glow);
-        glow.position.set(l.x, ly + 0.09, l.z);
+        glow.position.set(l.x + head.x, ly + 0.09, l.z + head.z);
         glow.rotation.x = -Math.PI / 2;
         group.add(glow);
       });
-      poleI.castShadow = true;
-      group.add(poleI, bulbI);
+      lampI.castShadow = true;
+      group.add(lampI, bulbI);
     }
 
     if (type !== 'avenue') {
+      const housingI = props
+        ? new THREE.InstancedMesh(props.signal.geometry, props.signal.material, 4)
+        : null;
+      if (housingI) { housingI.castShadow = true; group.add(housingI); }
+      const lens = new THREE.Vector3();
       for (let k = 0; k < 4; k++) {
         const sgn = k % 2 ? 1 : -1;
         const sgn2 = k < 2 ? 1 : -1;
@@ -375,13 +408,33 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         const tlx = cx + sgn * (BLOCK / 2 + 1.2);
         const tlz = cz + sgn2 * (BLOCK / 2 + 1.2);
         const y = heightAt(tlx, tlz);
-        flat(geos.tlPole, mats.metal, tlx, y + 2.4, tlz, 0, true);
-        flat(geos.tlHead, mats.roof, tlx, y + 5.0, tlz);
-        const dots = [
-          flat(geos.tlDot, mats.tlRed, tlx, y + 5.3, tlz - 0.2),
-          flat(geos.tlDot, mats.tlAmber, tlx, y + 5.0, tlz - 0.2),
-          flat(geos.tlDot, mats.tlGreen, tlx, y + 4.7, tlz - 0.2)
-        ];
+        // face away from the block, towards the traffic this signal governs
+        const yaw = k < 2 ? propYaw(sgn, 0) : propYaw(0, sgn2);
+
+        let dots: THREE.Mesh[];
+        if (housingI) {
+          scl.set(1, 1, 1);
+          quat.setFromAxisAngle(UP, yaw);
+          pos.set(tlx, y, tlz);
+          m4.compose(pos, quat, scl);
+          housingI.setMatrixAt(k, m4);
+          dots = SIGNAL_LENS_Y.map((ly, d) => {
+            lens.set(0, ly, -SIGNAL_LENS_OUT).applyAxisAngle(UP, yaw);
+            return flat(
+              geos.signalDot,
+              [mats.tlRed, mats.tlAmber, mats.tlGreen][d],
+              tlx + lens.x, y + lens.y, tlz + lens.z, yaw
+            );
+          });
+        } else {
+          flat(geos.tlPole, mats.metal, tlx, y + 2.4, tlz, 0, true);
+          flat(geos.tlHead, mats.roof, tlx, y + 5.0, tlz);
+          dots = [
+            flat(geos.tlDot, mats.tlRed, tlx, y + 5.3, tlz - 0.2),
+            flat(geos.tlDot, mats.tlAmber, tlx, y + 5.0, tlz - 0.2),
+            flat(geos.tlDot, mats.tlGreen, tlx, y + 4.7, tlz - 0.2)
+          ];
+        }
         signals.push({ nx: nodeX, nz: nodeZ, axisX: k < 2, dots });
       }
     }

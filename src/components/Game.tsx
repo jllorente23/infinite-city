@@ -8,6 +8,7 @@ import { City } from '@/game/City';
 import { Car } from '@/game/Car';
 import { Traffic } from '@/game/Traffic';
 import { DayNight } from '@/game/DayNight';
+import { SKY_RADIUS } from '@/game/config';
 import { qualityOf, useGame } from '@/game/store';
 import { Hud } from './Hud';
 import { TouchControls } from './TouchControls';
@@ -27,7 +28,7 @@ export default function Game() {
         shadows={q.shadows}
         dpr={[1, q.dpr]}
         gl={{ antialias: true, powerPreference: 'high-performance' }}
-        camera={{ fov: 64, near: 0.5, far: (q.loadRadius + 2) * 50 }}
+        camera={{ fov: 64, near: 0.5, far: Math.max(SKY_RADIUS + 300, (q.loadRadius + 2) * 50) }}
         onCreated={({ gl }) => {
           gl.toneMapping = THREE.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.05;

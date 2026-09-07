@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo, useRef } from 'react';
+import { Suspense, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
-import { DAY_SECONDS } from './config';
-import { createAssets } from './textures';
+import { Cloud, Clouds } from '@react-three/drei';
+import { DAY_SECONDS, SKY_RADIUS } from './config';
+import { cloudPuffUrl, createAssets } from './textures';
 import { vehicleMats } from './vehicles';
 import { playerPos, qualityOf, useGame } from './store';
 
@@ -22,10 +23,57 @@ const HEMI_NIGHT = new THREE.Color(0x2a3550);
 const GROUND_DAY = new THREE.Color(0x5e6670);
 const GROUND_NIGHT = new THREE.Color(0x141a24);
 
+const CLOUD_DAY = new THREE.Color(0xffffff);
+const CLOUD_SET = new THREE.Color(0xffc79a);
+const CLOUD_NIGHT = new THREE.Color(0x2b3346);
+
 const smooth = (a: number, b: number, x: number) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
+
+/** Clouds keep the scene fog off so the haze cannot erase them overhead. */
+class CloudLambert extends THREE.MeshLambertMaterial {
+  constructor() {
+    super();
+    this.fog = false;
+  }
+}
+
+/** A handful of drifting billboard clumps, parked at a fixed altitude. */
+function CloudLayer({ group }: { group: React.RefObject<THREE.Group> }) {
+  const texture = useMemo(() => cloudPuffUrl(), []);
+  const puffs = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, k) => {
+        const ang = (k / 7) * Math.PI * 2 + 0.7;
+        const dist = 150 + ((k * 53) % 130);
+        return {
+          seed: k * 17 + 3,
+          position: [Math.cos(ang) * dist, 120 + ((k * 29) % 70), Math.sin(ang) * dist] as [number, number, number]
+        };
+      }),
+    []
+  );
+  return (
+    <Clouds ref={group} material={CloudLambert} texture={texture} limit={260} frustumCulled={false}>
+      {puffs.map((p) => (
+        <Cloud
+          key={p.seed}
+          seed={p.seed}
+          position={p.position}
+          bounds={[95, 14, 95]}
+          segments={26}
+          volume={34}
+          growth={9}
+          speed={0.12}
+          opacity={0.5}
+          fade={40}
+        />
+      ))}
+    </Clouds>
+  );
+}
 
 export function DayNight() {
   const { scene } = useThree();
@@ -51,27 +99,35 @@ export function DayNight() {
       depthWrite: false,
       fog: false
     });
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(900, 24, 12), mat);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(SKY_RADIUS, 32, 16), mat);
+    mesh.frustumCulled = false;
     return { mesh, mat };
   }, []);
 
   const stars = useMemo(() => {
     const g = new THREE.BufferGeometry();
     const pos = new Float32Array(800 * 3);
+    const r = SKY_RADIUS * 0.94;
     for (let i = 0; i < 800; i++) {
       const th = Math.random() * Math.PI * 2;
       const ph = Math.acos(Math.random() * 0.95 + 0.05);
-      pos[i * 3] = Math.cos(th) * Math.sin(ph) * 850;
-      pos[i * 3 + 1] = Math.cos(ph) * 850;
-      pos[i * 3 + 2] = Math.sin(th) * Math.sin(ph) * 850;
+      pos[i * 3] = Math.cos(th) * Math.sin(ph) * r;
+      pos[i * 3 + 1] = Math.cos(ph) * r;
+      pos[i * 3 + 2] = Math.sin(th) * Math.sin(ph) * r;
     }
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     const m = new THREE.PointsMaterial({ color: 0xffffff, size: 1.8, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false });
     return new THREE.Points(g, m);
   }, []);
 
-  const fog = useMemo(() => new THREE.Fog(0xc4d4e6, 150, (q.loadRadius + 0.4) * 50), [q.loadRadius]);
+  // Starts well past the city core so the haze hides the streaming edge without
+  // washing out everything in the middle distance.
+  const fog = useMemo(() => new THREE.Fog(0xc4d4e6, q.loadRadius * 28, (q.loadRadius + 0.8) * 50), [q.loadRadius]);
   scene.fog = fog;
+
+  const cloudGroup = useRef<THREE.Group>(null);
+  const cloudMat = useRef<THREE.MeshLambertMaterial | null>(null);
+  const puffUrl = useMemo(() => (q.clouds ? cloudPuffUrl() : null), [q.clouds]);
 
   useFrame((state, delta) => {
     time.current = (time.current + delta / DAY_SECONDS) % 1;
@@ -112,6 +168,22 @@ export function DayNight() {
     sky.mesh.position.copy(state.camera.position);
     stars.position.copy(state.camera.position);
 
+    // Clouds ride along with the camera so the sky never empties out, and they
+    // pick up the sunset tint and fade down to a thin haze at night.
+    if (cloudGroup.current) {
+      cloudGroup.current.position.set(state.camera.position.x, 0, state.camera.position.z);
+      if (!cloudMat.current) {
+        cloudGroup.current.traverse((o: any) => {
+          if (o.isInstancedMesh) cloudMat.current = o.material;
+        });
+      }
+      const cm = cloudMat.current;
+      if (cm) {
+        cm.color.copy(CLOUD_NIGHT).lerp(CLOUD_DAY, day).lerp(CLOUD_SET, dusk * 0.5);
+        cm.opacity = 0.2 + day * 0.75;
+      }
+    }
+
     const { mats } = assets;
     for (const f of mats.facades) f.emissiveIntensity = night * 1.1;
     mats.merged.emissiveIntensity = night * 1.1;
@@ -139,6 +211,12 @@ export function DayNight() {
     <>
       <primitive object={sky.mesh} />
       <primitive object={stars} />
+      {puffUrl && (
+        // Its own boundary: a slow cloud sprite must never hold up the whole city.
+        <Suspense fallback={null}>
+          <CloudLayer group={cloudGroup} />
+        </Suspense>
+      )}
       <hemisphereLight ref={hemi} args={[0xe8f0fa, 0x5e6670, 0.9]} />
       <directionalLight
         ref={sun}
