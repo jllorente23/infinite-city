@@ -5,12 +5,11 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RapierRigidBody, RigidBody, CuboidCollider } from '@react-three/rapier';
 import { CELL, HW_INNER, HW_OUTER } from './config';
-import { heightAt } from './rng';
 import { makeVehicle, pickHue, specOf, vehicleHeight, VehicleKind } from './vehicles';
 import { playerPos, qualityOf, useGame } from './store';
 import { signalState } from './signals';
 import { useCityCars } from './carModels';
-import { isCanalCol, isCanalRow, isHwyCol, isHwyRow } from './city';
+import { isCanalCol, isCanalRow, isHwyCol, isHwyRow, roadHeightAt } from './city';
 
 const KINDS: VehicleKind[] = ['sedan', 'sedan', 'suv', 'taxi', 'pickup', 'van', 'bus', 'police', 'ambulance'];
 const DIR_YAW = [-Math.PI / 2, Math.PI, Math.PI / 2, 0];
@@ -216,15 +215,15 @@ function nearestThreat(self: Agent) {
  * Tilt from the four corners of the wheelbase so a sloped street does not
  * leave the car flat with two wheels in the air.
  */
-function poseOnGround(x: number, z: number, yaw: number, halfL: number, halfW: number, out: THREE.Quaternion) {
+function poseOnGround(seed: number, x: number, z: number, yaw: number, halfL: number, halfW: number, out: THREE.Quaternion) {
   const fx = -Math.sin(yaw);
   const fz = -Math.cos(yaw);
   const rx = Math.cos(yaw);
   const rz = -Math.sin(yaw);
-  const yF = heightAt(x + fx * halfL, z + fz * halfL);
-  const yB = heightAt(x - fx * halfL, z - fz * halfL);
-  const yR = heightAt(x + rx * halfW, z + rz * halfW);
-  const yL = heightAt(x - rx * halfW, z - rz * halfW);
+  const yF = roadHeightAt(seed, x + fx * halfL, z + fz * halfL);
+  const yB = roadHeightAt(seed, x - fx * halfL, z - fz * halfL);
+  const yR = roadHeightAt(seed, x + rx * halfW, z + rz * halfW);
+  const yL = roadHeightAt(seed, x - rx * halfW, z - rz * halfW);
   _fwd.set(fx * 2 * halfL, yF - yB, fz * 2 * halfL);
   _right.set(rx * 2 * halfW, yR - yL, rz * 2 * halfW);
   _slope.crossVectors(_right, _fwd);
@@ -332,7 +331,7 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
   };
 
   const placeAt = (x: number, z: number, yaw: number, snap = false) => {
-    const y = poseOnGround(x, z, yaw, spec.L * 0.42, spec.W * 0.42, _rot);
+    const y = poseOnGround(seed, x, z, yaw, spec.L * 0.42, spec.W * 0.42, _rot);
     if (snap) {
       body.current?.setTranslation({ x, y, z }, true);
       body.current?.setRotation(_rot, true);

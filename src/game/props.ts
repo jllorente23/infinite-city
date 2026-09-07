@@ -24,10 +24,12 @@ export const propYaw = (dx: number, dz: number) => Math.atan2(-dx, -dz);
 /** Underside of the lamp head, at the far end of the arm, which reaches out -Z. */
 export const LAMP_HEAD = { y: 5.9, z: -1.58 };
 
-/** Signal lenses measured off the model: red on top, then amber, then green.
- *  They sit just inside the visors on the -Z face. */
+/** Signal lenses measured off the baked GLB (scale 10, yaw -π/2): the three
+ *  visored clusters sit at 4.98 / 4.57 / 4.16. A lower trio lands on the
+ *  housing belly and reads as a fourth light. Front face ≈ 0.50, visor tip
+ *  ≈ 0.73, so the disc sits in the opening. */
 export const SIGNAL_LENS_Y = [4.98, 4.57, 4.16];
-export const SIGNAL_LENS_OUT = 0.52;
+export const SIGNAL_LENS_OUT = 0.70;
 
 export type PropMesh = { geometry: THREE.BufferGeometry; material: THREE.Material };
 export type CityProps = { lamp: PropMesh; signal: PropMesh };

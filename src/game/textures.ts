@@ -323,7 +323,9 @@ export function roundedSlab(w: number, h: number, d: number, r = CORNER_R) {
   s.absarc(-hw + rr, -hd + rr, rr, Math.PI, Math.PI * 1.5, false);
   const g = new THREE.ExtrudeGeometry(s, { depth: h, bevelEnabled: false, curveSegments: 7 });
   g.rotateX(-Math.PI / 2);
-  g.translate(0, h / 2, 0);
+  // After the rotation Y runs 0..h. Centre it so placing the mesh at the
+  // sidewalk height does not raise a 2 m pedestal that buries the buildings.
+  g.translate(0, -h / 2, 0);
   g.computeVertexNormals();
   return g;
 }
@@ -458,9 +460,9 @@ export function createAssets() {
   };
 
   const geos = {
-    curb: roundedSlab(BLOCK + 1.2, 2.2, BLOCK + 1.2, CORNER_R + 0.4),
-    sidewalk: roundedSlab(BLOCK, 2.6, BLOCK, CORNER_R),
-    inner: roundedSlab(BLOCK - SIDEWALK * 2, 1.15, BLOCK - SIDEWALK * 2, Math.max(1.2, CORNER_R - 1.6)),
+    curb: roundedSlab(BLOCK + 1.2, 0.95, BLOCK + 1.2, CORNER_R + 0.4),
+    sidewalk: roundedSlab(BLOCK, 1.05, BLOCK, CORNER_R),
+    inner: roundedSlab(BLOCK - SIDEWALK * 2, 1.0, BLOCK - SIDEWALK * 2, Math.max(1.2, CORNER_R - 1.6)),
     skirt: new THREE.BoxGeometry(BLOCK + 0.6, 4.4, BLOCK + 0.6),
     manhole: new THREE.CircleGeometry(0.38, 16),
     tactile: new THREE.BoxGeometry(1.6, 0.06, 1.6),
@@ -489,7 +491,7 @@ export function createAssets() {
     tlHead: new THREE.BoxGeometry(0.34, 0.95, 0.3),
     tlDot: new THREE.CircleGeometry(0.1, 16).rotateY(Math.PI),
     // Round emissive discs sit over the authored circular lenses.
-    signalDot: new THREE.CircleGeometry(0.15, 20).rotateY(Math.PI),
+    signalDot: new THREE.CircleGeometry(0.13, 20).rotateY(Math.PI),
     bench: new THREE.BoxGeometry(1.7, 0.16, 0.55),
     benchBack: new THREE.BoxGeometry(1.7, 0.5, 0.12),
     bin: new THREE.CylinderGeometry(0.3, 0.26, 0.9, 8),

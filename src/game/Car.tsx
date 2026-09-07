@@ -7,9 +7,9 @@ import { CuboidCollider, RapierRigidBody, RigidBody, useBeforePhysicsStep, useRa
 import { makeChassis, makeWheel } from './vehicles';
 import { useCityCars } from './carModels';
 import { controls, playerPos, useGame } from './store';
-import { CELL } from './config';
-import { heightAt, isInsideBlock } from './rng';
-import { blockTypeAt } from './city';
+import { CELL, STREET } from './config';
+import { heightAt } from './rng';
+import { blockTypeAt, roadHeightAt } from './city';
 import { burstSparks } from './Sparks';
 import { trafficHit } from './Traffic';
 
@@ -207,16 +207,33 @@ export function Car() {
     // there would bounce the car above the water forever.
     up.set(0, 1, 0).applyQuaternion(chassis.quaternion);
     flipped.current = up.y < 0.25 ? flipped.current + delta : 0;
-    const gy = heightAt(t.x, t.z);
-    const inBasin = isInsideBlock(t.x, t.z) &&
-      blockTypeAt(useGame.getState().seed, Math.floor(t.x / CELL), Math.floor(t.z / CELL)) === 'canal';
-    // Canal water is lower than the streets, but it must never disable recovery
-    // completely: if its catch collider is missing, recover instead of falling
-    // forever.
-    const fellThrough = t.y < gy - (inBasin ? 6 : 0.4);
+    const seed = useGame.getState().seed;
+    const gy = roadHeightAt(seed, t.x, t.z);
+    const wet = blockTypeAt(seed, Math.floor(t.x / CELL), Math.floor(t.z / CELL)) === 'canal';
+    // If the jeep finds a hole in a canal cell, put it back on the nearest
+    // street instead of snapping into the water.
+    const fellThrough = t.y < gy - 0.35;
     if (fellThrough || flipped.current > 1.5) {
       const yaw = Math.atan2(-fwd.x, -fwd.z);
-      rb.setTranslation({ x: t.x, y: gy + START_CLEARANCE, z: t.z }, true);
+      let sx = t.x, sz = t.z;
+      if (wet) {
+        const lx = ((t.x % CELL) + CELL) % CELL;
+        const lz = ((t.z % CELL) + CELL) % CELL;
+        const ox = t.x - lx, oz = t.z - lz;
+        const choices = [
+          { x: ox + STREET / 4, z: t.z },
+          { x: ox + CELL - STREET / 4, z: t.z },
+          { x: t.x, z: oz + STREET / 4 },
+          { x: t.x, z: oz + CELL - STREET / 4 }
+        ];
+        let best = choices[0], bestD = Infinity;
+        for (const c of choices) {
+          const d = Math.hypot(c.x - t.x, c.z - t.z);
+          if (d < bestD) { best = c; bestD = d; }
+        }
+        sx = best.x; sz = best.z;
+      }
+      rb.setTranslation({ x: sx, y: roadHeightAt(seed, sx, sz) + START_CLEARANCE + 0.25, z: sz }, true);
       rb.setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), true);
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
       rb.setAngvel({ x: 0, y: 0, z: 0 }, true);

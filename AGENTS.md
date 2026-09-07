@@ -37,8 +37,9 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 - **No vuelvas a poner SSR / EffectComposer.** El temporal resolve deja rastros al andar. El asfalto es `MeshStandardMaterial` mate, no `MeshPhysical` con envMap/clearcoat.
 - Faroles: no “se prenden al llegar”. Reasigna luces con fade, no un snap de intensidad.
 - Tráfico: no recicles un auto que el jugador todavía ve. En solape, frena; no teletransportes.
-- Semáforos: lentes redondas, ciclo largo (verde / ámbar / todo rojo). **Un cruce, un dueño** (`hasSignals` en la esquina SE de la manzana). No 4 postes por esquina. Autopista y canal no llevan semáforo; el resto usa STOP/CEDA.
-- Andenes: losa redondeada (`roundedSlab`) y falda oscura debajo para que no se vea el cielo en pendientes.
+- Semáforos: lentes en `SIGNAL_LENS_Y = [4.98, 4.57, 4.16]` y `SIGNAL_LENS_OUT = 0.70` (visores del GLB ya rotado; un terceto más bajo pinta una cuarta luz en el vientre). Un cruce, un dueño. Autopista y canal no llevan semáforo.
+- Andenes: losa redondeada **centrada** (`roundedSlab` con `translate(0,-h/2,0)`), altura ~1 m. La falda oscura va debajo, no como pedestal. Si la losa se extruye hacia arriba, los edificios quedan enterrados.
+- Canal: el puente va **sobre las calles** que cruzan el agua (`archedPatch` + `roadHeightAt`), no en el centro de la manzana. Orillas sólidas, barandas en el arco y muros en el cauce. Si el jeep cae, `Car` lo devuelve a la calle más cercana.
 - Controles táctiles solo en touch. En desktop, teclado. Calidad por defecto: `high` también en móvil.
 - Reloj estilo GTA en `Hud` (el día dura `DAY_SECONDS`).
 - Estacionamiento: autos alineados a `LOT_COLS` × `LOT_ROWS`, misma grilla que `lotTexture`.
@@ -50,7 +51,7 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 
 `canal` | `highway` | `avenue` | `mall` | `parking` | `works` | `tower` | `build` | `park` | `plaza` | `low`
 
-- Autopista **gana** al canal: el agua pasa por debajo y el tablero sigue. Canal solo = cauce + puente a mitad de manzana. El tráfico de autopista no debe flotar sobre el agua.
+- Autopista **gana** al canal: el agua pasa por debajo y el tablero sigue. Canal solo = cauce + puente en cada calle que lo cruza (subir y bajar). El tráfico usa `roadHeightAt` para no flotar.
 - Semilla `18`: autopista norte-sur al nacer. Semilla `7` (default): la más cercana ~125 m al oeste.
 
 ## Fallos que el usuario ya reportó
