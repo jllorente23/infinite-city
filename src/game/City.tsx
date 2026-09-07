@@ -10,6 +10,7 @@ import { setTerrainSeed } from './rng';
 import { useCityProps } from './props';
 import { useCityNature } from './nature';
 import { useCityBuildings } from './buildings';
+import { useCityIndustrial } from './industrial';
 import { useCityCars } from './carModels';
 import { signalState } from './signals';
 
@@ -45,6 +46,7 @@ export function City() {
   useCityProps();
   useCityNature();
   useCityBuildings();
+  useCityIndustrial();
   useCityCars();
 
   const [cells, setCells] = useState<Slot[]>(() =>

@@ -9,7 +9,7 @@ import { makeVehicle, pickHue, specOf, vehicleHeight, VehicleKind } from './vehi
 import { playerPos, qualityOf, useGame } from './store';
 import { signalState } from './signals';
 import { useCityCars } from './carModels';
-import { isCanalCol, isCanalRow, isHwyCol, isHwyRow, roadHeightAt } from './city';
+import { canalBlocks, isCanalCol, isCanalRow, isHwyCol, isHwyRow, roadHeightAt } from './city';
 
 const KINDS: VehicleKind[] = ['sedan', 'sedan', 'suv', 'taxi', 'pickup', 'van', 'bus', 'police', 'ambulance'];
 const DIR_YAW = [-Math.PI / 2, Math.PI, Math.PI / 2, 0];
@@ -415,6 +415,13 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
     const alongX = runsAlongX(a.dir);
     const here = laneOf(a.dir, a.center, a.along, a.lane);
 
+    // A canal only carries a bridge every few blocks. Anywhere else the street
+    // is a dead end at the quay, so this lane is no good.
+    if (!a.hwy && canalBlocks(seed, here.x, here.z)) {
+      respawn();
+      return;
+    }
+
     let want = a.cruise;
     let room = Infinity;
     let roomSpeed = 0;
@@ -449,6 +456,14 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
       }
     } else {
       a.plan = 'straight';
+    }
+
+    if (!a.hwy) {
+      for (let s = 8; s <= 28; s += 5) {
+        const px = alongX ? here.x + sgn * s : here.x;
+        const pz = alongX ? here.z : here.z + sgn * s;
+        if (canalBlocks(seed, px, pz)) { hold(s - 6); break; }
+      }
     }
 
     const lead = nearestThreat(a);

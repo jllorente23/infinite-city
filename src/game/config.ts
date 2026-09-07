@@ -12,11 +12,17 @@ export const HW_WIDTH = HW_LANE * 4 + HW_MEDIAN + HW_SHOULDER * 2;
 export const HW_INNER = HW_MEDIAN / 2 + HW_LANE / 2;
 export const HW_OUTER = HW_MEDIAN / 2 + HW_LANE * 1.5;
 export const CANAL_W = 16;
-/** Full roadway plus a kerb. Each canal cell builds one half; together they
- *  read as a single wide bridge. */
-export const BRIDGE_DECK = STREET / 2 + 0.85;
-export const BRIDGE_SPAN = BLOCK;
-export const BRIDGE_RISE = 2.7;
+/** Kenney's `road-bridge` tile carries its roadway between two kerbs that take
+ *  up a fifth of the tile, so this is the scale that makes the lanes `STREET`
+ *  wide. */
+export const BRIDGE_DECK_W = STREET / 0.8;
+/** Deck plus ramps add up to exactly one cell, so a crossing never reaches past
+ *  the neighbouring block. */
+export const BRIDGE_SPAN = 26;
+export const BRIDGE_RAMP = CELL / 2 - BRIDGE_SPAN / 2;
+export const BRIDGE_RISE = 1.25;
+/** One crossing every this many blocks along a canal. */
+export const BRIDGE_EVERY = 3;
 export const CORNER_R = 3.4;
 export const LOT_COLS = 8;
 export const LOT_ROWS = 2;

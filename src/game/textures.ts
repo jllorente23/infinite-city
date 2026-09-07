@@ -478,8 +478,10 @@ export function createAssets() {
     jet: new THREE.CylinderGeometry(0.5, 1.2, 3.4, 12),
     railX: new THREE.BoxGeometry(BLOCK, 1, 0.25),
     railZ: new THREE.BoxGeometry(0.25, 1, BLOCK),
-    quayX: new THREE.BoxGeometry(BLOCK + 1.4, 4.4, 0.7),
-    quayZ: new THREE.BoxGeometry(0.7, 4.4, BLOCK + 1.4),
+    // A canal runs the whole cell, so its quay wall has to as well or the
+    // corners leak daylight into the channel.
+    quayX: new THREE.BoxGeometry(CELL, 4.4, 0.7),
+    quayZ: new THREE.BoxGeometry(0.7, 4.4, CELL),
     lake: new THREE.PlaneGeometry(BLOCK + 0.6, BLOCK + 0.6),
     glow: new THREE.PlaneGeometry(9, 9),
     lotWallX: new THREE.BoxGeometry(BLOCK - SIDEWALK * 2, 0.7, 0.5),

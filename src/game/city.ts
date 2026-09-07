@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { BLOCK, BRIDGE_DECK, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, SIDEWALK, STREET } from './config';
-import { assembleBridge, bridgeLiftAmount } from './bridge';
+import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, SIDEWALK, STREET } from './config';
 import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
-import { cityProps, LAMP_HEAD, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
+import { BRIDGE_KERB, BRIDGE_SLAB, BRIDGE_TOP, cityProps, LAMP_HEAD, PILLAR_TOP, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
+import { cityIndustrial, CONTAINER_KINDS, IndustrialKind, NAVE_KINDS, STACK_KINDS, TANK_KINDS } from './industrial';
 import { cityNature, GROUND_KINDS, KERB_KINDS, NatureKind, TREE_KINDS } from './nature';
 import { makeSign, SignKind } from './signs';
 import { cityBuildings, HOUSE_KINDS, MID_KINDS, TOWER_KINDS, BuildingKind } from './buildings';
@@ -215,44 +215,138 @@ function patch(cx: number, cz: number, w: number, l: number, yaw: number, segW: 
 /** Top of the centred sidewalk / lot slab above `heightAt`. */
 const SLAB_TOP = 0.34;
 
-export { bridgeLiftAmount } from './bridge';
+const CROSS_Z = 9311;
+const CROSS_X = 9312;
 
-/** Extra height on the street bridges that actually cross a canal. */
-export function canalBridgeLift(seed: number, x: number, z: number) {
+/** Nearest canal crossing to the origin, and where to stand to drive over it.
+ *  Used by `?at=canal` so the bridges can be looked at without hunting. */
+export function nearestCanalCrossing(seed: number, radius = 24) {
+  for (let r = 1; r < radius; r++) {
+    for (let i = -r; i <= r; i++) {
+      for (let j = -r; j <= r; j++) {
+        if (Math.max(Math.abs(i), Math.abs(j)) !== r) continue;
+        if (blockTypeAt(seed, i, j) !== 'canal') continue;
+        const ax = canalAxis(seed, i, j);
+        const back = BRIDGE_SPAN / 2 + BRIDGE_RAMP - 4;
+        if ((ax === 'z' || ax === 'both') && canalCrossing(seed, j, CROSS_Z)) {
+          return { x: i * CELL + CELL / 2 - back, z: j * CELL, yaw: -Math.PI / 2 };
+        }
+        if ((ax === 'x' || ax === 'both') && canalCrossing(seed, i, CROSS_X)) {
+          return { x: i * CELL, z: j * CELL + CELL / 2 - back, yaw: Math.PI };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * A canal is crossed every few blocks, the way a real city does it, instead of
+ * carrying a bridge on every single street. Streets run along cell boundaries,
+ * so `n` is the boundary index on the axis that crosses the water.
+ */
+export function canalCrossing(seed: number, n: number, salt: number) {
+  const band = Math.floor(n / BRIDGE_EVERY);
+  const r = mulberry32(hash3(seed, band, salt));
+  return n - band * BRIDGE_EVERY === Math.floor(r() * BRIDGE_EVERY);
+}
+
+/** Canal axis of a cell, but only when the canal actually wins the block. */
+function canalCellAxis(seed: number, i: number, j: number): HighwayAxis | null {
+  return blockTypeAt(seed, i, j) === 'canal' ? canalAxis(seed, i, j) : null;
+}
+
+/**
+ * Height of a crossing at distance `a` from the water's centreline: flat over
+ * the deck, then eased back down onto the terrain along the ramp. Geometry,
+ * traffic and the player all read this, so they never disagree.
+ */
+function crossingY(terrainY: number, deckY: number, a: number) {
+  const u = Math.abs(a);
+  if (u <= BRIDGE_SPAN / 2) return deckY;
+  if (u >= BRIDGE_SPAN / 2 + BRIDGE_RAMP) return terrainY;
+  const t = (u - BRIDGE_SPAN / 2) / BRIDGE_RAMP;
+  return terrainY + (deckY - terrainY) * 0.5 * (1 + Math.cos(Math.PI * t));
+}
+
+/** Where the player and the traffic actually drive: terrain, or a bridge deck. */
+export function roadHeightAt(seed: number, x: number, z: number) {
+  const terrain = heightAt(x, z);
   const i = Math.floor(x / CELL), j = Math.floor(z / CELL);
-  if (blockTypeAt(seed, i, j) !== 'canal') return 0;
-  const axis = canalAxis(seed, i, j);
-  if (!axis) return 0;
-  const ox = i * CELL, oz = j * CELL;
-  const cx = ox + CELL / 2, cz = oz + CELL / 2;
-  let lift = 0;
-  const onDeck = (alongX: boolean, street: number) => {
-    const lat = alongX ? Math.abs(z - street) : Math.abs(x - street);
-    if (lat > BRIDGE_DECK / 2 + 0.25) return 0;
-    return bridgeLiftAmount(alongX ? x - cx : z - cz);
-  };
+  if (!isCanalCol(seed, i) && !isCanalRow(seed, j)) return terrain;
+  let y = terrain;
+
+  // Canal running north-south: its bridges run along X, on boundaries in Z.
+  if (canalCellAxis(seed, i, j) === 'z' || canalCellAxis(seed, i, j) === 'both') {
+    const mid = i * CELL + CELL / 2;
+    const a = x - mid;
+    if (Math.abs(a) < BRIDGE_SPAN / 2 + BRIDGE_RAMP) {
+      for (const n of [j, j + 1]) {
+        if (!canalCrossing(seed, n, CROSS_Z)) continue;
+        if (Math.abs(z - n * CELL) > STREET / 2) continue;
+        y = Math.max(y, crossingY(terrain, heightAt(mid, n * CELL) + BRIDGE_RISE, a));
+      }
+    }
+  }
+  if (canalCellAxis(seed, i, j) === 'x' || canalCellAxis(seed, i, j) === 'both') {
+    const mid = j * CELL + CELL / 2;
+    const a = z - mid;
+    if (Math.abs(a) < BRIDGE_SPAN / 2 + BRIDGE_RAMP) {
+      for (const n of [i, i + 1]) {
+        if (!canalCrossing(seed, n, CROSS_X)) continue;
+        if (Math.abs(x - n * CELL) > STREET / 2) continue;
+        y = Math.max(y, crossingY(terrain, heightAt(n * CELL, mid) + BRIDGE_RISE, a));
+      }
+    }
+  }
+  return y;
+}
+
+/** Open water with no deck over it. Traffic uses this to give up on a lane. */
+export function canalBlocks(seed: number, x: number, z: number) {
+  const i = Math.floor(x / CELL), j = Math.floor(z / CELL);
+  if (!isCanalCol(seed, i) && !isCanalRow(seed, j)) return false;
+  const axis = canalCellAxis(seed, i, j);
+  if (!axis) return false;
+  const onDeck = (n: number, along: number, lat: number, salt: number) =>
+    canalCrossing(seed, n, salt) && Math.abs(lat - n * CELL) <= STREET / 2 && Math.abs(along) <= BRIDGE_SPAN / 2;
   if (axis === 'z' || axis === 'both') {
-    lift = Math.max(lift, onDeck(true, oz + STREET / 4), onDeck(true, oz + CELL - STREET / 4));
+    const a = x - (i * CELL + CELL / 2);
+    if (Math.abs(a) <= CANAL_W / 2 && !onDeck(j, a, z, CROSS_Z) && !onDeck(j + 1, a, z, CROSS_Z)) return true;
   }
   if (axis === 'x' || axis === 'both') {
-    lift = Math.max(lift, onDeck(false, ox + STREET / 4), onDeck(false, ox + CELL - STREET / 4));
+    const a = z - (j * CELL + CELL / 2);
+    if (Math.abs(a) <= CANAL_W / 2 && !onDeck(i, a, x, CROSS_X) && !onDeck(i + 1, a, x, CROSS_X)) return true;
   }
-  return lift;
+  return false;
 }
 
-export function roadHeightAt(seed: number, x: number, z: number) {
-  return heightAt(x, z) + canalBridgeLift(seed, x, z);
-}
-
-/** Road deck that rises in the middle so a canal crossing is a real bridge. */
-function archedPatch(cx: number, cz: number, alongX: boolean, length: number, width: number, segs: number, rise: number) {
-  const g = new THREE.PlaneGeometry(alongX ? length : width, alongX ? width : length, alongX ? segs : 2, alongX ? 2 : segs);
+/**
+ * The whole crossing corridor — ramp, deck, ramp — as one grid, so the climb
+ * has no seam anywhere along it. `keep` trims it to a sub-range of the span,
+ * which is how the ramps are drawn without covering the model's own roadway.
+ */
+function corridorPatch(
+  alongX: boolean,
+  mid: number,
+  lat: number,
+  width: number,
+  deckY: number,
+  from: number,
+  to: number,
+  segs: number
+) {
+  const len = to - from;
+  const g = new THREE.PlaneGeometry(alongX ? len : width, alongX ? width : len, alongX ? segs : 2, alongX ? 2 : segs);
   const p = g.attributes.position;
+  const centre = (from + to) / 2;
   for (let k = 0; k < p.count; k++) {
     const px = p.getX(k), py = -p.getY(k);
-    const wx = cx + px, wz = cz + py;
-    const lift = bridgeLiftAmount(alongX ? px : py, length, rise);
-    p.setXYZ(k, wx, heightAt(wx, wz) + lift, wz);
+    const a = centre + (alongX ? px : py);
+    const off = alongX ? py : px;
+    const wx = alongX ? mid + a : lat + off;
+    const wz = alongX ? lat + off : mid + a;
+    p.setXYZ(k, wx, crossingY(heightAt(wx, wz), deckY, a), wz);
   }
   const idx = g.index!.array as ArrayLike<number>;
   const a = new THREE.Vector3().fromBufferAttribute(p as THREE.BufferAttribute, idx[0]);
@@ -320,111 +414,162 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
 
   if (type === 'canal') {
     const axis = canalAxis(seed, i, j) ?? 'x';
-    const f = STREET / 2 / CELL;
     const half = CANAL_W / 2;
-    const bank = (BLOCK - CANAL_W) / 2;
+    const bankW = (CELL - CANAL_W) / 2;
+    const uf = bankW / CELL;
     const strips: THREE.BufferGeometry[] = [];
+    // Trimesh only: the crossing corridor, whose roadway is the bridge model.
+    const collide: THREE.BufferGeometry[] = [];
 
-    const addCrossing = (alongX: boolean, streetPos: number, innerSign: number, uvBox: number[]) => {
-      const cut = alongX
-        ? (axis === 'z' || axis === 'both')
-        : (axis === 'x' || axis === 'both');
-      if (!cut) {
-        if (alongX) strips.push(patch(cx, streetPos, CELL, STREET / 2, 0, segs, 1, 0, uvBox));
-        else strips.push(patch(streetPos, cz, STREET / 2, CELL, 0, 1, segs, 0, uvBox));
-        return;
+    // Paved quays fill everything the water does not, so the kerb never opens
+    // onto a hole. Their UVs keep the painted streets lined up with the tile.
+    if (axis === 'z') {
+      strips.push(patch(ox + bankW / 2, cz, bankW, CELL, 0, 3, segs, 0, [0, uf, 0, 1]));
+      strips.push(patch(ox + CELL - bankW / 2, cz, bankW, CELL, 0, 3, segs, 0, [1 - uf, 1, 0, 1]));
+    } else if (axis === 'x') {
+      strips.push(patch(cx, oz + bankW / 2, CELL, bankW, 0, segs, 3, 0, [0, 1, 1 - uf, 1]));
+      strips.push(patch(cx, oz + CELL - bankW / 2, CELL, bankW, 0, segs, 3, 0, [0, 1, 0, uf]));
+    } else {
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          strips.push(patch(
+            ox + (sx < 0 ? bankW / 2 : CELL - bankW / 2),
+            oz + (sz < 0 ? bankW / 2 : CELL - bankW / 2),
+            bankW, bankW, 0, 3, 3, 0,
+            [sx < 0 ? 0 : 1 - uf, sx < 0 ? uf : 1, sz < 0 ? 1 - uf : 0, sz < 0 ? 1 : uf]
+          ));
+        }
       }
-      const approach = (CELL - BRIDGE_SPAN) / 2;
-      if (alongX) {
-        strips.push(patch(cx - BRIDGE_SPAN / 2 - approach / 2, streetPos, approach, STREET / 2, 0, Math.max(2, segs - 2), 1, 0));
-        strips.push(patch(cx + BRIDGE_SPAN / 2 + approach / 2, streetPos, approach, STREET / 2, 0, Math.max(2, segs - 2), 1, 0));
-      } else {
-        strips.push(patch(streetPos, cz - BRIDGE_SPAN / 2 - approach / 2, STREET / 2, approach, 0, 1, Math.max(2, segs - 2), 0));
-        strips.push(patch(streetPos, cz + BRIDGE_SPAN / 2 + approach / 2, STREET / 2, approach, 0, 1, Math.max(2, segs - 2), 0));
-      }
-      const br = archedPatch(
-        alongX ? cx : streetPos,
-        alongX ? streetPos : cz,
-        alongX,
-        BRIDGE_SPAN,
-        BRIDGE_DECK,
-        segs + 8,
-        BRIDGE_RISE
-      );
-      strips.push(br);
-      const deck = new THREE.Mesh(br, mats.strip);
-      deck.receiveShadow = true;
-      group.add(deck);
-      group.add(assembleBridge(
-        alongX,
-        alongX ? cx : streetPos,
-        alongX ? streetPos : cz,
-        innerSign,
-        {
-          deck: mats.deck,
-          walk: mats.sidewalk,
-          stone: mats.stone,
-          steel: mats.metal,
-          rail: mats.rail,
-          under: mats.under
-        },
-        trash,
-        boxes
-      ));
-    };
-
-    addCrossing(true, oz + STREET / 4, 1, [0, 1, 1 - f, 1]);
-    addCrossing(true, oz + CELL - STREET / 4, -1, [0, 1, 0, f]);
-    addCrossing(false, ox + STREET / 4, 1, [0, f, 0, 1]);
-    addCrossing(false, ox + CELL - STREET / 4, -1, [1 - f, 1, 0, 1]);
-
-    // Solid banks so leaving the kerb never drops you into the void.
-    if (axis === 'z' || axis === 'both') {
-      strips.push(patch(cx - half - bank / 2, cz, bank, BLOCK, 0, 2, segs, 0));
-      strips.push(patch(cx + half + bank / 2, cz, bank, BLOCK, 0, 2, segs, 0));
     }
-    if (axis === 'x' || axis === 'both') {
-      strips.push(patch(cx, cz - half - bank / 2, BLOCK, bank, 0, segs, 2, 0));
-      strips.push(patch(cx, cz + half + bank / 2, BLOCK, bank, 0, segs, 2, 0));
-    }
-    strips.forEach((g) => {
-      trash.push(g);
-      if (!group.children.some((ch) => (ch as THREE.Mesh).geometry === g)) {
-        const m = new THREE.Mesh(g, mats.tile);
+
+    const props = cityProps();
+    const reach = BRIDGE_SPAN / 2 + BRIDGE_RAMP;
+
+    /** One crossing: ramps up, Kenney's deck over the water, ramps down. */
+    const addBridge = (alongX: boolean, mid: number, lat: number) => {
+      const deckY = heightAt(alongX ? mid : lat, alongX ? lat : mid) + BRIDGE_RISE;
+      collide.push(corridorPatch(alongX, mid, lat, STREET, deckY, -reach, reach, segs * 3));
+      // Only the ramps are drawn; over the water the model is the roadway.
+      for (const s of [-1, 1]) {
+        const g = corridorPatch(
+          alongX, mid, lat, STREET, deckY,
+          s < 0 ? -reach : BRIDGE_SPAN / 2,
+          s < 0 ? -BRIDGE_SPAN / 2 : reach,
+          segs * 2
+        );
+        trash.push(g);
+        const m = new THREE.Mesh(g, mats.strip);
         m.receiveShadow = true;
         group.add(m);
       }
+
+      if (props) {
+        const deck = new THREE.Mesh(props.bridge.geometry, props.bridge.material);
+        deck.scale.set(BRIDGE_DECK_W, BRIDGE_DECK_W, BRIDGE_SPAN);
+        if (alongX) deck.rotation.y = Math.PI / 2;
+        deck.position.set(
+          alongX ? mid : lat,
+          deckY - BRIDGE_TOP * BRIDGE_DECK_W,
+          alongX ? lat : mid
+        );
+        deck.castShadow = true;
+        deck.receiveShadow = true;
+        group.add(deck);
+
+        // Piers standing in the channel, under the slab.
+        const bed = hc - 4.3;
+        const under = deckY - (BRIDGE_TOP - BRIDGE_SLAB) * BRIDGE_DECK_W;
+        for (const a of [-CANAL_W * 0.26, CANAL_W * 0.26]) {
+          for (const t of [-STREET * 0.26, STREET * 0.26]) {
+            const px = alongX ? mid + a : lat + t;
+            const pz = alongX ? lat + t : mid + a;
+            const pillar = new THREE.Mesh(props.pillar.geometry, props.pillar.material);
+            pillar.scale.set(18, (under - bed) / PILLAR_TOP, 18);
+            pillar.position.set(px, bed, pz);
+            pillar.castShadow = true;
+            group.add(pillar);
+          }
+        }
+      }
+
+      // The tile's own kerb is only ankle high, so the deck gets the same
+      // parapet as the embankment. It is what keeps you out of the water.
+      const rail = 1.05;
+      const railY = deckY + (BRIDGE_KERB - BRIDGE_TOP) * BRIDGE_DECK_W + rail / 2;
+      const railLat = (STREET / 2 + BRIDGE_DECK_W / 2) / 2;
+      for (const s of [-1, 1]) {
+        const g = alongX
+          ? new THREE.BoxGeometry(BRIDGE_SPAN, rail, 0.55)
+          : new THREE.BoxGeometry(0.55, rail, BRIDGE_SPAN);
+        trash.push(g);
+        const rx = alongX ? mid : lat + s * railLat;
+        const rz = alongX ? lat + s * railLat : mid;
+        const m = new THREE.Mesh(g, mats.stone);
+        m.position.set(rx, railY, rz);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        group.add(m);
+        boxes.push({
+          pos: [rx, railY, rz],
+          half: alongX ? [BRIDGE_SPAN / 2, rail / 2 + 0.35, 0.35] : [0.35, rail / 2 + 0.35, BRIDGE_SPAN / 2]
+        });
+      }
+    };
+
+    // Only the boundary this cell owns, so a crossing is never built twice.
+    if ((axis === 'z' || axis === 'both') && canalCrossing(seed, j, CROSS_Z)) addBridge(true, cx, oz);
+    if ((axis === 'x' || axis === 'both') && canalCrossing(seed, i, CROSS_X)) addBridge(false, cz, ox);
+
+    strips.forEach((g) => {
+      trash.push(g);
+      const m = new THREE.Mesh(g, mats.tile);
+      m.receiveShadow = true;
+      group.add(m);
     });
-    ground = mergePatches(strips);
+    collide.forEach((g) => trash.push(g));
+    ground = mergePatches([...strips, ...collide]);
     trash.push(ground);
     addWater(axis);
 
-    const wallH = 1.25;
-    const openR = BRIDGE_DECK / 2 + 0.4;
+    // Parapet along the whole embankment, open only where a bridge lands.
+    const wallH = 1.1;
+    const openR = STREET / 2 + 1.2;
     const wallRun = (alongZ: boolean, edge: number, opens: number[]) => {
       const lo = alongZ ? oz : ox;
-      const hi = lo + CELL;
-      const cuts = [lo, ...opens.flatMap((o) => [o - openR, o + openR]), hi].sort((a, b) => a - b);
+      const cuts = [lo, ...opens.flatMap((o) => [o - openR, o + openR]), lo + CELL].sort((a, b) => a - b);
       for (let k = 0; k < cuts.length; k += 2) {
-        const a = cuts[k], b = cuts[k + 1];
+        const a = Math.max(lo, cuts[k]);
+        const b = Math.min(lo + CELL, cuts[k + 1]);
         if (b - a < 1.1) continue;
-        const mid = (a + b) / 2;
+        const at = (a + b) / 2;
         const len = b - a;
+        const g = alongZ
+          ? new THREE.BoxGeometry(0.5, wallH, len)
+          : new THREE.BoxGeometry(len, wallH, 0.5);
+        trash.push(g);
+        const x = alongZ ? edge : at;
+        const z = alongZ ? at : edge;
+        const y = heightAt(x, z) + wallH / 2;
+        const m = new THREE.Mesh(g, mats.stone);
+        m.position.set(x, y, z);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        group.add(m);
         boxes.push({
-          pos: alongZ ? [edge, hc + wallH / 2, mid] : [mid, hc + wallH / 2, edge],
-          half: alongZ ? [0.3, wallH / 2 + 0.2, len / 2] : [len / 2, wallH / 2 + 0.2, 0.3]
+          pos: [x, y, z],
+          half: alongZ ? [0.3, wallH / 2 + 0.3, len / 2] : [len / 2, wallH / 2 + 0.3, 0.3]
         });
       }
     };
     if (axis === 'z' || axis === 'both') {
-      const opens = [oz + STREET / 4, oz + CELL - STREET / 4];
+      const opens = [j, j + 1].filter((n) => canalCrossing(seed, n, CROSS_Z)).map((n) => n * CELL);
       for (const s of [-1, 1]) {
         flat(geos.quayZ, mats.deck, cx + s * half, hc - 2.1, cz);
         wallRun(true, cx + s * half, opens);
       }
     }
     if (axis === 'x' || axis === 'both') {
-      const opens = [ox + STREET / 4, ox + CELL - STREET / 4];
+      const opens = [i, i + 1].filter((n) => canalCrossing(seed, n, CROSS_X)).map((n) => n * CELL);
       for (const s of [-1, 1]) {
         flat(geos.quayX, mats.deck, cx, hc - 2.1, cz + s * half);
         wallRun(false, cz + s * half, opens);
@@ -559,53 +704,76 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     flat(geos.inner, type === 'works' ? mats.lot : mats.lotFloor, cx, hc - 0.16, cz, 0, true);
     boxes.push({ pos: [cx, hc + 0.04, cz], half: [half, 0.4, half] });
     if (type === 'works') {
-      const catalog = cityBuildings();
-      const sheds = 1 + (rnd() < 0.45 ? 1 : 0);
+      const plant = cityIndustrial();
+      /** Drop a kit piece with its base on the yard, scaled to fit a footprint. */
+      const place = (kind: IndustrialKind, px: number, pz: number, fit: number, yaw: number, solid = true) => {
+        if (!plant) return;
+        const b = plant[kind];
+        const gy = heightAt(px, pz) + SLAB_TOP;
+        const mesh = new THREE.Mesh(b.geometry, b.material);
+        mesh.position.set(px, gy, pz);
+        mesh.scale.setScalar(fit);
+        mesh.rotation.y = yaw;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+        if (!solid) return;
+        const turned = Math.abs(Math.sin(yaw)) > 0.5;
+        const hw = (turned ? b.size.d : b.size.w) * fit / 2;
+        const hd = (turned ? b.size.w : b.size.d) * fit / 2;
+        boxes.push({ pos: [px, gy + b.size.h * fit / 2, pz], half: [hw, b.size.h * fit / 2, hd] });
+      };
+
+      const sheds = 1 + (rnd() < 0.5 ? 1 : 0);
       for (let k = 0; k < sheds; k++) {
-        const ww = inner * (0.42 + rnd() * 0.2);
-        const dd = inner * (0.28 + rnd() * 0.12);
-        const hh = 6.5 + rnd() * 3.2;
-        const oxs = sheds === 1 ? 0 : (k ? 1 : -1) * inner * 0.22;
-        const ozs = (rnd() < 0.5 ? 1 : -1) * inner * 0.08;
-        const bx = cx + oxs, bz = cz + ozs;
-        const gy = heightAt(bx, bz);
-        if (catalog) {
-          const kind = MID_KINDS[Math.floor(rnd() * MID_KINDS.length)];
-          const b = catalog[kind];
-          const fit = Math.min(ww / b.size.w, dd / b.size.d);
-          const bh = Math.max(5.5, Math.min(b.size.h * fit * 0.85, hh));
-          const mesh = new THREE.Mesh(b.geometry, b.material);
-          mesh.position.set(bx, gy + SLAB_TOP, bz);
-          mesh.scale.set(fit, bh / b.size.h, fit);
-          mesh.rotation.y = rnd() < 0.5 ? 0 : Math.PI / 2;
-          mesh.castShadow = true;
-          mesh.receiveShadow = true;
-          group.add(mesh);
-          boxes.push({ pos: [bx, gy + SLAB_TOP + bh / 2, bz], half: [b.size.w * fit / 2, bh / 2, b.size.d * fit / 2] });
+        const ww = inner * (sheds === 1 ? 0.72 : 0.44);
+        const dd = inner * (sheds === 1 ? 0.5 : 0.44);
+        const bx = cx + (sheds === 1 ? 0 : (k ? 1 : -1) * inner * 0.24);
+        const bz = cz + (sheds === 1 ? (rnd() < 0.5 ? 1 : -1) * inner * 0.18 : 0);
+        const kind = NAVE_KINDS[Math.floor(rnd() * NAVE_KINDS.length)];
+        const yaw = rnd() < 0.5 ? 0 : Math.PI / 2;
+        if (plant) {
+          const b = plant[kind];
+          const turned = yaw !== 0;
+          const fit = Math.min(ww / (turned ? b.size.d : b.size.w), dd / (turned ? b.size.w : b.size.d));
+          place(kind, bx, bz, fit, yaw);
         } else {
+          const hh = 8 + rnd() * 3;
           const geo = buildingGeo(ww, hh, dd);
           trash.push(geo);
           const mesh = new THREE.Mesh(geo, mats.mallWall);
-          mesh.position.set(bx, gy + hh / 2, bz);
+          mesh.position.set(bx, heightAt(bx, bz) + hh / 2, bz);
           mesh.castShadow = true;
           group.add(mesh);
-          boxes.push({ pos: [bx, gy + hh / 2, bz], half: [ww / 2, hh / 2, dd / 2] });
+          boxes.push({ pos: [bx, heightAt(bx, bz) + hh / 2, bz], half: [ww / 2, hh / 2, dd / 2] });
         }
       }
-      const tanks = 2 + Math.floor(rnd() * 2);
+
+      // Yard clutter: a stack, storage tanks and a row of containers.
+      const yard = (r: number) => cx + (rnd() * 2 - 1) * (half - r);
+      const yardZ = (r: number) => cz + (rnd() * 2 - 1) * (half - r);
+      if (plant && rnd() < 0.75) {
+        const kind = rnd() < 0.4 ? 'waterTower' : STACK_KINDS[Math.floor(rnd() * STACK_KINDS.length)];
+        const sx = yard(5), sz = yardZ(5);
+        if (!onDriveable(seed, sx, sz, 4)) place(kind as IndustrialKind, sx, sz, 1, 0);
+      }
+      const tanks = 1 + Math.floor(rnd() * 3);
       for (let k = 0; k < tanks; k++) {
-        const tx = cx + (rnd() * 2 - 1) * (half - 5);
-        const tz = cz + (rnd() * 2 - 1) * (half - 5);
-        if (onDriveable(seed, tx, tz, 3)) continue;
-        const rad = 1.4 + rnd() * 0.7;
-        const th = 3.2 + rnd() * 1.6;
-        const tankG = new THREE.CylinderGeometry(rad, rad, th, 10);
-        trash.push(tankG);
-        const tank = new THREE.Mesh(tankG, mats.metal);
-        tank.position.set(tx, heightAt(tx, tz) + th / 2, tz);
-        tank.castShadow = true;
-        group.add(tank);
-        boxes.push({ pos: [tx, heightAt(tx, tz) + th / 2, tz], half: [rad, th / 2, rad] });
+        const tx = yard(5), tz = yardZ(5);
+        if (onDriveable(seed, tx, tz, 4)) continue;
+        place(TANK_KINDS[Math.floor(rnd() * TANK_KINDS.length)], tx, tz, 1, rnd() * Math.PI * 2);
+      }
+      if (plant && rnd() < 0.7) {
+        const row = 2 + Math.floor(rnd() * 3);
+        const yaw = rnd() < 0.5 ? 0 : Math.PI / 2;
+        const bx = yard(9), bz = yardZ(9);
+        for (let k = 0; k < row; k++) {
+          const step = (k - (row - 1) / 2) * 3.4;
+          const px = bx + (yaw === 0 ? step : 0);
+          const pz = bz + (yaw === 0 ? 0 : step);
+          if (onDriveable(seed, px, pz, 3.4)) continue;
+          place(CONTAINER_KINDS[Math.floor(rnd() * CONTAINER_KINDS.length)], px, pz, 1, yaw);
+        }
       }
     } else if (type === 'parking') {
       const gap = Math.floor(rnd() * 4);

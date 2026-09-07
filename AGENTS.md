@@ -21,8 +21,9 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 | Archivo | Rol |
 | --- | --- |
 | `src/game/city.ts` | Tipos de manzana, vegetación, calzada, colisionadores |
-| `src/game/bridge.ts` | Mitad de puente de canal (pilares, vigas, pretil) |
+| `src/game/industrial.ts` | Kit industrial de Kenney (naves, chimeneas, tanques, contenedores) |
 | `src/game/SkidMarks.tsx` | Marcas de frenada en el asfalto |
+| `scripts/check-bridge.ts` | Verifica un cruce de canal sin abrir el navegador |
 | `src/game/config.ts` | `BLOCK`, `STREET`, `CELL`, autopista (`HW_*`), `QUALITY` |
 | `src/game/Car.tsx` | Jeep del jugador, cámara, faros, red de seguridad |
 | `src/game/Traffic.tsx` | IA cinemática, carriles, semáforos, autopista |
@@ -41,7 +42,7 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 - Tráfico: no recicles un auto que el jugador todavía ve. En solape, frena; no teletransportes.
 - Semáforos: lentes en `SIGNAL_LENS_Y = [4.98, 4.57, 4.16]` y `SIGNAL_LENS_OUT = 0.70` (visores del GLB ya rotado; un terceto más bajo pinta una cuarta luz en el vientre). Un cruce, un dueño. Autopista y canal no llevan semáforo.
 - Andenes: losa redondeada **centrada** (`roundedSlab` con `translate(0,-h/2,0)`), altura ~1 m. La falda oscura va debajo, no como pedestal. Si la losa se extruye hacia arriba, los edificios quedan enterrados.
-- Canal: cada manzana arma **media calzada** de un puente de verdad (`assembleBridge`: losa gruesa, acera, pretil, vigas y pilares). La vecina pone la otra mitad. El tablero sigue `archedPatch` + `roadHeightAt`. Nunca un plano suelto ni un hueco bajo la rampa. Si el jeep cae, vuelve a la calle.
+- Canal: el puente es el modelo `road-bridge` de Kenney, estirado (`BRIDGE_DECK_W` de ancho para que el carril mida `STREET`, `BRIDGE_SPAN` de largo). Su calzada está en `y=0.51`, no 0.45, y su bordillo solo sube 1 cm: el pretil que te sostiene lo pone `city.ts`. No hay puente en cada calle: `canalCrossing` deja **uno cada `BRIDGE_EVERY` manzanas**; las demás mueren en el malecón con pretil visible y colisionador. `crossingY` es la única fuente de altura: la usan la rampa, el tablero, el tráfico y `roadHeightAt`. Si las tocas por separado aparece un escalón.
 - Jeep: el gas se enrolla con el tiempo (`boost`); el techo sube si mantienes el pedal. Al frenar fuerte, `stampSkid` deja rastros.
 - Controles táctiles solo en touch. En desktop, teclado. Calidad por defecto: `high` también en móvil.
 - Reloj estilo GTA en `Hud` (el día dura `DAY_SECONDS`).
@@ -54,7 +55,9 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 
 `canal` | `highway` | `avenue` | `mall` | `parking` | `works` | `tower` | `build` | `park` | `plaza` | `low`
 
-- Autopista **gana** al canal: el agua pasa por debajo y el tablero sigue. Canal solo = cauce + puente de verdad en cada calle que lo cruza. El tráfico usa `roadHeightAt`.
+- Autopista **gana** al canal: el agua pasa por debajo y el tablero sigue. Canal solo = cauce + un puente cada tantas manzanas; el tráfico consulta `canalBlocks` y descarta el carril que muere en el agua.
+- `works` usa el kit industrial: nave grande, chimenea o torre de agua, tanques y una fila de contenedores. Nada de cilindros procedurales.
+- `?at=canal` te deja en la rampa del puente más cercano (`nearestCanalCrossing`). Úsalo para revisar el canal.
 - Semilla `18`: autopista norte-sur al nacer. Semilla `7` (default): la más cercana ~125 m al oeste.
 
 ## Fallos que el usuario ya reportó

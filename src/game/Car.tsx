@@ -9,7 +9,7 @@ import { useCityCars } from './carModels';
 import { controls, playerPos, useGame } from './store';
 import { CELL, STREET } from './config';
 import { heightAt } from './rng';
-import { blockTypeAt, roadHeightAt } from './city';
+import { blockTypeAt, nearestCanalCrossing, roadHeightAt } from './city';
 import { burstSparks } from './Sparks';
 import { stampSkid } from './SkidMarks';
 import { trafficHit } from './Traffic';
@@ -110,6 +110,23 @@ export function Car() {
   const sparkCd = useRef(0);
   const boost = useRef(0);
   const skidCd = useRef(0);
+
+  // `?at=canal` starts you on a bridge approach. Canals are rare on purpose,
+  // so this saves driving in circles looking for one.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('at') !== 'canal') return;
+    const seed = useGame.getState().seed;
+    const spot = nearestCanalCrossing(seed);
+    if (!spot) return;
+    const t = setTimeout(() => {
+      const rb = body.current;
+      if (!rb) return;
+      rb.setTranslation({ x: spot.x, y: roadHeightAt(seed, spot.x, spot.z) + START_CLEARANCE + 0.25, z: spot.z }, true);
+      rb.setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), spot.yaw), true);
+      rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    }, 2000);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     if (!body.current) return;

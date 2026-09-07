@@ -6,6 +6,21 @@ import { useGLTF } from '@react-three/drei';
 
 const LAMP_URL = '/models/props/street-lamp.glb';
 const SIGNAL_URL = '/models/props/traffic-light.glb';
+const BRIDGE_URL = '/models/props/road-bridge.glb';
+const PILLAR_URL = '/models/props/bridge-pillar.glb';
+
+/**
+ * `road-bridge` is a one unit tile driven along Z: the roadway sits at 0.51
+ * between kerbs that reach |x| = 0.4, the slab bottoms out at 0.42 and four
+ * corner legs run down to 0. It stays at unit size because a crossing
+ * stretches it along the span.
+ */
+export const BRIDGE_TOP = 0.51;
+export const BRIDGE_LANE = 0.4;
+export const BRIDGE_KERB = 0.52;
+export const BRIDGE_SLAB = 0.42;
+/** Column, 0.1 wide and 0.5 tall, also left at unit size. */
+export const PILLAR_TOP = 0.5;
 
 /**
  * Kenney's kit is modelled at roughly one unit per road tile, so both props get
@@ -32,7 +47,7 @@ export const SIGNAL_LENS_Y = [4.98, 4.57, 4.16];
 export const SIGNAL_LENS_OUT = 0.70;
 
 export type PropMesh = { geometry: THREE.BufferGeometry; material: THREE.Material };
-export type CityProps = { lamp: PropMesh; signal: PropMesh };
+export type CityProps = { lamp: PropMesh; signal: PropMesh; bridge: PropMesh; pillar: PropMesh };
 
 let cache: CityProps | null = null;
 
@@ -75,15 +90,21 @@ function bake(scene: THREE.Object3D, scale: number, yaw = 0): PropMesh {
 export function useCityProps(): CityProps {
   const lamp = useGLTF(LAMP_URL);
   const signal = useGLTF(SIGNAL_URL);
+  const bridge = useGLTF(BRIDGE_URL);
+  const pillar = useGLTF(PILLAR_URL);
   return useMemo(() => {
     cache = {
       lamp: bake(lamp.scene, LAMP_SCALE),
       // the kit models the signal looking down -X, so turn it to face -Z
-      signal: bake(signal.scene, SIGNAL_SCALE, -Math.PI / 2)
+      signal: bake(signal.scene, SIGNAL_SCALE, -Math.PI / 2),
+      bridge: bake(bridge.scene, 1),
+      pillar: bake(pillar.scene, 1)
     };
     return cache;
-  }, [lamp, signal]);
+  }, [lamp, signal, bridge, pillar]);
 }
 
 useGLTF.preload(LAMP_URL);
 useGLTF.preload(SIGNAL_URL);
+useGLTF.preload(BRIDGE_URL);
+useGLTF.preload(PILLAR_URL);
