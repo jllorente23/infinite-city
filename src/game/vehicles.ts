@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createAssets } from './textures';
+import { kitBody, kitWheel, usesTruckWheel } from './carModels';
 
 /**
  * Cars are extruded side profiles, not stacked boxes: the silhouette carries the
@@ -166,7 +167,14 @@ function bandGeo(pts: number[][], width: number) {
   return g;
 }
 
-export function makeWheel(r: number, w: number, simple: boolean) {
+export function makeWheel(r: number, w: number, simple: boolean, truck = false) {
+  const kit = kitWheel(r, w, truck);
+  if (kit) {
+    const g = new THREE.Group() as THREE.Group & { tire?: THREE.Mesh };
+    g.add(kit);
+    g.tire = kit;
+    return g;
+  }
   const m = vehicleMats();
   const g = new THREE.Group() as THREE.Group & { tire?: THREE.Mesh };
   const t = new THREE.Mesh(CYL, m.tire);
@@ -192,7 +200,7 @@ export function makeWheel(r: number, w: number, simple: boolean) {
 
 export type VehicleGroup = THREE.Group & { wheels?: THREE.Object3D[]; spec?: Spec };
 
-function mountWheels(g: VehicleGroup, spec: Spec, simple: boolean) {
+function mountWheels(g: VehicleGroup, spec: Spec, simple: boolean, truck = false) {
   const zF = spec.arches[0].x - spec.L / 2;
   const zR = spec.arches[1].x - spec.L / 2;
   const ht = spec.W / 2 - spec.wr * 0.32;
@@ -201,7 +209,7 @@ function mountWheels(g: VehicleGroup, spec: Spec, simple: boolean) {
   for (const [x, z] of spots) {
     const holder = new THREE.Group();
     holder.position.set(x, spec.wr, z);
-    holder.add(makeWheel(spec.wr, spec.wr * 0.62, simple));
+    holder.add(makeWheel(spec.wr, spec.wr * 0.62, simple, truck));
     g.add(holder);
     wheels.push(holder);
   }
@@ -212,10 +220,15 @@ function mountWheels(g: VehicleGroup, spec: Spec, simple: boolean) {
 /** Body only, no wheels: used by the physics car, which places wheels from the solver. */
 export function makeChassis(kind: VehicleKind, hex: number, simple = false) {
   const m = vehicleMats();
-  const base = kind === 'taxi' || kind === 'police' ? 'sedan' : kind === 'ambulance' ? 'van' : kind;
-  const spec = SPEC[base] || SPEC.sedan;
+  const spec = specOf(kind);
   const g = new THREE.Group() as VehicleGroup;
   g.spec = spec;
+  const kit = kitBody(kind);
+  if (kit) {
+    g.add(kit);
+    return g;
+  }
+  const base = kind === 'taxi' || kind === 'police' ? 'sedan' : kind === 'ambulance' ? 'van' : kind;
   const paint = bodyMat(hex);
   const half = spec.L / 2, front = -half, rear = half, W = spec.W;
 
@@ -296,11 +309,14 @@ function buildJeepDetails(g: VehicleGroup, spec: Spec) {
 /** Full vehicle with its own wheels: traffic and parked cars. */
 export function makeVehicle(kind: VehicleKind, hex: number, simple = true) {
   const g = makeChassis(kind, hex, simple);
-  mountWheels(g, g.spec!, simple);
+  mountWheels(g, g.spec!, simple, usesTruckWheel(kind));
   return g;
 }
 
 const protoCache: Record<string, VehicleGroup> = {};
+export function resetVehicleProtos() {
+  for (const key of Object.keys(protoCache)) delete protoCache[key];
+}
 export function cloneVehicle(kind: VehicleKind, hex: number) {
   const key = `${kind}_${hex}`;
   if (!protoCache[key]) protoCache[key] = makeVehicle(kind, hex, true);

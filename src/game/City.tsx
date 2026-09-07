@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { CuboidCollider, RigidBody, TrimeshCollider } from '@react-three/rapier';
 import { CELL } from './config';
@@ -10,6 +10,7 @@ import { setTerrainSeed } from './rng';
 import { useCityProps } from './props';
 import { useCityNature } from './nature';
 import { useCityBuildings } from './buildings';
+import { useCityCars } from './carModels';
 import { signalState } from './signals';
 
 type Slot = { key: string; i: number; j: number; lod: number };
@@ -38,16 +39,27 @@ export function City() {
   useCityProps();
   useCityNature();
   useCityBuildings();
+  useCityCars();
 
-  const [cells, setCells] = useState<Slot[]>([]);
-  const center = useRef({ i: NaN, j: NaN });
+  const [cells, setCells] = useState<Slot[]>(() =>
+    wantedSlots(0, 0, q.loadRadius, q.detailRadius, q.midRadius)
+  );
+  const center = useRef({ i: 0, j: 0 });
+  const setBooting = useGame((s) => s.setBooting);
 
   useEffect(() => {
     setTerrainSeed(seed);
     ensureFacades();
-    center.current = { i: NaN, j: NaN };
-    setCells([]);
-  }, [seed, quality]);
+    const ci = Math.floor(playerPos.x / CELL);
+    const cj = Math.floor(playerPos.z / CELL);
+    center.current = { i: ci, j: cj };
+    setCells(wantedSlots(ci, cj, q.loadRadius, q.detailRadius, q.midRadius));
+  }, [seed, quality, q.loadRadius, q.detailRadius, q.midRadius]);
+
+  useLayoutEffect(() => {
+    const id = requestAnimationFrame(() => setBooting(false));
+    return () => cancelAnimationFrame(id);
+  }, [seed, quality, setBooting]);
 
   useFrame(() => {
     const ci = Math.floor(playerPos.x / CELL);

@@ -19,11 +19,19 @@ export default function Game() {
   const setSeed = useGame((s) => s.setSeed);
   const seed = useGame((s) => s.seed);
   const q = qualityOf(quality);
+  const booting = useGame((s) => s.booting);
   const [panel, setPanel] = useState(false);
   const [draft, setDraft] = useState(String(seed));
 
   return (
     <div className="stage">
+      {booting && (
+        <div className="preloader" role="status">
+          <div className="preloader-title">Ciudad infinita</div>
+          <div className="preloader-bar" aria-hidden><i /></div>
+          <div className="preloader-cap">Preparando la manzana…</div>
+        </div>
+      )}
       <Canvas
         shadows={q.shadows}
         dpr={[1, q.dpr]}
@@ -44,8 +52,8 @@ export default function Game() {
         </Suspense>
       </Canvas>
 
-      <Hud />
-      <TouchControls />
+      {!booting && <Hud />}
+      {!booting && <TouchControls />}
 
       <button className="gear" onClick={() => setPanel((p) => !p)} aria-label="Opciones">
         &#9881;

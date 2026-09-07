@@ -235,7 +235,7 @@ export function createAssets() {
     quayX: new THREE.BoxGeometry(BLOCK + 1.4, 4.4, 0.7),
     quayZ: new THREE.BoxGeometry(0.7, 4.4, BLOCK + 1.4),
     lake: new THREE.PlaneGeometry(BLOCK + 0.6, BLOCK + 0.6),
-    glow: new THREE.PlaneGeometry(17, 17),
+    glow: new THREE.PlaneGeometry(9, 9),
     lotWallX: new THREE.BoxGeometry(BLOCK - SIDEWALK * 2, 0.7, 0.5),
     lotWallZ: new THREE.BoxGeometry(0.5, 0.7, BLOCK - SIDEWALK * 2),
     lotPole: new THREE.CylinderGeometry(0.14, 0.18, 7, 6),

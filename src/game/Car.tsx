@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { CuboidCollider, RapierRigidBody, RigidBody, useBeforePhysicsStep, useRapier } from '@react-three/rapier';
 import { makeChassis, makeWheel } from './vehicles';
+import { useCityCars } from './carModels';
 import { controls, playerPos, useGame } from './store';
 import { CELL } from './config';
 import { heightAt, isInsideBlock } from './rng';
@@ -37,6 +38,7 @@ const ROLL_INERTIA_BOOST = 2.8;
  * so the hull collider, the wheels and the mesh all line up without offsets.
  */
 export function Car() {
+  useCityCars();
   const body = useRef<RapierRigidBody>(null);
   const { world } = useRapier();
   const { camera } = useThree();
@@ -52,7 +54,7 @@ export function Car() {
     });
     g.traverse((o: any) => { if (o.isMesh) o.castShadow = true; });
     const mkSpot = (x: number) => {
-      const light = new THREE.SpotLight(0xfff1c4, 0, 46, 0.46, 0.42, 1.15);
+      const light = new THREE.SpotLight(0xfff1c4, 0, 28, 0.36, 0.62, 1.4);
       light.position.set(x, 0.82, -2.05);
       light.target.position.set(x * 0.2, -0.15, -18);
       g.add(light);
@@ -60,7 +62,7 @@ export function Car() {
       return light;
     };
     const spots = [mkSpot(-0.62), mkSpot(0.62)];
-    const fill = new THREE.PointLight(0xffe4b0, 0, 13, 1.7);
+    const fill = new THREE.PointLight(0xffe4b0, 0, 7, 2.2);
     fill.position.set(0, 0.72, -2.15);
     g.add(fill);
     const halfY = (HULL_TOP - s.bottom) / 2;
@@ -218,9 +220,9 @@ export function Car() {
 
     const night = useGame.getState().night;
     const beams = night > 0.28 ? night : 0;
-    spots[0].intensity = beams * 85;
-    spots[1].intensity = beams * 85;
-    fill.intensity = beams * 14;
+    spots[0].intensity = beams * 18;
+    spots[1].intensity = beams * 18;
+    fill.intensity = beams * 2.2;
 
     setHud({ speed: Math.round(Math.abs(speed) * 3.6) });
   });

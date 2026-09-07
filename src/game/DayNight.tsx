@@ -165,7 +165,7 @@ export function DayNight() {
       hemi.current.color.copy(HEMI_NIGHT).lerp(HEMI_DAY, day);
       hemi.current.groundColor.copy(GROUND_NIGHT).lerp(GROUND_DAY, day);
     }
-    state.gl.toneMappingExposure = 1.08 + night * 0.22;
+    state.gl.toneMappingExposure = 1.02 + night * 0.06;
 
     (stars.material as THREE.PointsMaterial).opacity = Math.pow(night, 2) * 0.9;
     sky.mesh.position.copy(state.camera.position);
@@ -190,8 +190,8 @@ export function DayNight() {
     const { mats } = assets;
     for (const f of mats.facades) f.emissiveIntensity = night * 1.1;
     mats.merged.emissiveIntensity = night * 1.1;
-    mats.glow.opacity = night * 0.85;
-    mats.bulb.emissiveIntensity = 0.25 + night * 1.6;
+    mats.glow.opacity = night * 0.28;
+    mats.bulb.emissiveIntensity = 0.18 + night * 0.55;
     mats.mallGlass.emissiveIntensity = night * 0.5;
 
     const vm = vehicleMats();
@@ -233,7 +233,7 @@ export function DayNight() {
         shadow-camera-bottom={-70}
         shadow-bias={-0.0008}
       />
-      <StreetGlow count={q.shadows ? 16 : 10} />
+      <StreetGlow count={q.shadows ? 10 : 6} />
     </>
   );
 }
@@ -247,35 +247,32 @@ function StreetGlow({ count }: { count: number }) {
   const lamps = useMemo(
     () =>
       Array.from({ length: count }, () => ({
-        light: new THREE.PointLight(0xffd89a, 0, 34, 1.35),
+        light: new THREE.PointLight(0xffd89a, 0, 24, 2),
         key: '',
-        hold: 0
+        want: 0
       })),
     [count]
   );
 
   useFrame((_, dt) => {
     const night = useGame.getState().night;
-    const heads = nearestLampHeads(playerPos.x, playerPos.z, count + 8);
+    const heads = nearestLampHeads(playerPos.x, playerPos.z, count + 6);
     const used = new Set<string>();
     lamps.forEach((slot) => {
-      slot.hold -= dt;
-      const still = heads.find((h) => `${h.x.toFixed(0)},${h.z.toFixed(0)}` === slot.key && h.d < 78);
-      if (still && slot.hold > 0) {
-        used.add(slot.key);
-        slot.light.position.set(still.x, still.y, still.z);
-        const fade = 1 - Math.max(0, (still.d - 28) / 50);
-        slot.light.intensity = night * 26 * Math.max(0.2, fade);
+      const still = heads.find((h) => `${h.x.toFixed(0)},${h.z.toFixed(0)}` === slot.key && h.d < 64);
+      const dest = still ?? heads.find((h) => !used.has(`${h.x.toFixed(0)},${h.z.toFixed(0)}`));
+      if (!dest) {
+        slot.want = 0;
+        slot.key = '';
+        slot.light.intensity += (0 - slot.light.intensity) * Math.min(1, dt * 4);
         return;
       }
-      const next = heads.find((h) => !used.has(`${h.x.toFixed(0)},${h.z.toFixed(0)}`));
-      if (!next) { slot.light.intensity = 0; slot.key = ''; return; }
-      slot.key = `${next.x.toFixed(0)},${next.z.toFixed(0)}`;
-      slot.hold = 2.8;
+      slot.key = `${dest.x.toFixed(0)},${dest.z.toFixed(0)}`;
       used.add(slot.key);
-      slot.light.position.set(next.x, next.y, next.z);
-      const fade = 1 - Math.max(0, (next.d - 28) / 50);
-      slot.light.intensity = night * 26 * Math.max(0.2, fade);
+      slot.light.position.set(dest.x, dest.y, dest.z);
+      const fade = 1 - Math.max(0, (dest.d - 22) / 42);
+      slot.want = night * 6.5 * Math.max(0.15, fade);
+      slot.light.intensity += (slot.want - slot.light.intensity) * Math.min(1, dt * 3.2);
     });
   });
 

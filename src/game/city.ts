@@ -29,6 +29,14 @@ export type ChunkData = {
 
 const PARK_KINDS: VehicleKind[] = ['sedan', 'sedan', 'suv', 'pickup', 'van', 'taxi'];
 
+/** True when a point sits on the asphalt grid (streets + junctions). */
+function onRoadway(x: number, z: number, pad = 0) {
+  const lx = ((x % CELL) + CELL) % CELL;
+  const lz = ((z % CELL) + CELL) % CELL;
+  return lz < STREET / 2 + pad || lz > CELL - STREET / 2 - pad
+    || lx < STREET / 2 + pad || lx > CELL - STREET / 2 - pad;
+}
+
 /** Low frequency layer: districts, so towers cluster and suburbs spread out. */
 function district(seed: number, i: number, j: number) {
   return mulberry32(hash3(seed, Math.floor(i / 6) + 1000, Math.floor(j / 6) + 1000))();
@@ -236,11 +244,12 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     }
     let tries = 0;
     const want = 8 + Math.floor(rnd() * 6);
-    while (trees.length < want && tries < 60) {
+    while (trees.length < want && tries < 80) {
       tries++;
-      const tx = cx + (rnd() * 2 - 1) * (BLOCK / 2 - 2);
-      const tz = cz + (rnd() * 2 - 1) * (BLOCK / 2 - 2);
-      if (!nearAve(tx, tz, 3.2)) trees.push({ x: tx, z: tz, s: 0.8 + rnd() * 0.6, kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)] });
+      const tx = cx + (rnd() * 2 - 1) * (inner / 2 - 2.4);
+      const tz = cz + (rnd() * 2 - 1) * (inner / 2 - 2.4);
+      if (nearAve(tx, tz, 4.2) || onRoadway(tx, tz, 3.6)) continue;
+      trees.push({ x: tx, z: tz, s: 0.7 + rnd() * 0.45, kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)] });
     }
   } else if (type === 'parking' || type === 'mall') {
     const half = inner / 2;
@@ -314,15 +323,22 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
           flat(geos.benchBack, mats.wood, bx - Math.cos(ang) * 0.22, hc + 0.72, bz - Math.sin(ang) * 0.22, ang + Math.PI / 2);
         }
         for (let k = 0; k < 4; k++) {
-          trees.push({ x: cx + (k % 2 ? 1 : -1) * (inner / 2 - 2), z: cz + (k < 2 ? 1 : -1) * (inner / 2 - 2), s: 1.1, kind: TREE_KINDS[k % TREE_KINDS.length] });
+          const tx = cx + (k % 2 ? 1 : -1) * (inner / 2 - 3.2);
+          const tz = cz + (k < 2 ? 1 : -1) * (inner / 2 - 3.2);
+          if (!onRoadway(tx, tz, 3.2)) trees.push({ x: tx, z: tz, s: 0.95, kind: TREE_KINDS[k % TREE_KINDS.length] });
         }
       } else {
         const count = 7 + Math.floor(rnd() * 7);
-        for (let k = 0; k < count; k++) {
+        let tries = 0;
+        while (trees.length < count && tries < 40) {
+          tries++;
+          const tx = cx + (rnd() * 2 - 1) * (inner / 2 - 3);
+          const tz = cz + (rnd() * 2 - 1) * (inner / 2 - 3);
+          if (onRoadway(tx, tz, 3.4)) continue;
           trees.push({
-            x: cx + (rnd() * 2 - 1) * (inner / 2 - 2.5),
-            z: cz + (rnd() * 2 - 1) * (inner / 2 - 2.5),
-            s: 0.8 + rnd() * 0.9,
+            x: tx,
+            z: tz,
+            s: 0.75 + rnd() * 0.55,
             kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)]
           });
         }
@@ -398,7 +414,9 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       if (rnd() < 0.6) {
         const side = rnd() < 0.5 ? 1 : -1;
         for (let k = -1; k <= 1; k += 2) {
-          trees.push({ x: cx + k * BLOCK * 0.25, z: cz + side * (BLOCK / 2 - 1.6), s: 0.75 + rnd() * 0.25, kind: 'common' });
+          const tx = cx + k * BLOCK * 0.22;
+          const tz = cz + side * (BLOCK / 2 - 3.3);
+          if (!onRoadway(tx, tz, 3.2)) trees.push({ x: tx, z: tz, s: 0.62 + rnd() * 0.18, kind: 'common' });
         }
       }
       if (far && farBoxes.length) {
@@ -416,22 +434,39 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     const quat = new THREE.Quaternion();
     const scl = new THREE.Vector3();
 
-    if (type !== 'parking' && type !== 'mall') {
-      const extra = type === 'park' ? 16 : type === 'plaza' ? 12 : type === 'avenue' ? 8 : 6;
+    if (type === 'park' || type === 'plaza' || type === 'avenue') {
+      const extra = type === 'park' ? 16 : type === 'plaza' ? 12 : 6;
       for (let k = 0; k < extra; k++) {
-        const px = cx + (rnd() * 2 - 1) * (inner / 2 - 1.6);
-        const pz = cz + (rnd() * 2 - 1) * (inner / 2 - 1.6);
+        const px = cx + (rnd() * 2 - 1) * (inner / 2 - 2.2);
+        const pz = cz + (rnd() * 2 - 1) * (inner / 2 - 2.2);
+        if (onRoadway(px, pz, 2.4)) continue;
         if (type === 'avenue') {
-          const a = isAveA(seed, i, j) && Math.abs(px - cx + (pz - cz)) / 1.4142 < STREET / 2 + 2.4;
-          const b = isAveB(seed, i, j) && Math.abs(px - cx - (pz - cz)) / 1.4142 < STREET / 2 + 2.4;
+          const a = isAveA(seed, i, j) && Math.abs(px - cx + (pz - cz)) / 1.4142 < STREET / 2 + 3.2;
+          const b = isAveB(seed, i, j) && Math.abs(px - cx - (pz - cz)) / 1.4142 < STREET / 2 + 3.2;
           if (a || b) continue;
         }
         plants.push({
           x: px,
           z: pz,
-          s: 0.75 + rnd() * 0.5,
+          s: 0.7 + rnd() * 0.4,
           yaw: rnd() * Math.PI * 2,
           kind: GROUND_KINDS[Math.floor(rnd() * GROUND_KINDS.length)]
+        });
+      }
+    } else if (type !== 'parking' && type !== 'mall') {
+      for (let k = 0; k < 4; k++) {
+        const along = (rnd() - 0.5) * (inner - 4);
+        const side = k < 2 ? 1 : -1;
+        const onX = k % 2 === 0;
+        const px = onX ? cx + along : cx + side * (BLOCK / 2 - 3.1);
+        const pz = onX ? cz + side * (BLOCK / 2 - 3.1) : cz + along;
+        if (onRoadway(px, pz, 2.2)) continue;
+        plants.push({
+          x: px,
+          z: pz,
+          s: 0.65 + rnd() * 0.25,
+          yaw: rnd() * Math.PI * 2,
+          kind: GROUND_KINDS[Math.floor(rnd() * 3)]
         });
       }
     }

@@ -36,10 +36,11 @@ En `buildings/commercial` y `buildings/suburban` hay un recorte de Kenney
 *City Kit* (CC0). Sustituyen los bloques extruidos en las manzanas cercanas.
 Comparten `Textures/colormap.png` con ruta relativa.
 
-## Vehículos
+## Vehículos (ya integrados)
 
-Los vehículos actuales se generan por código (`src/game/vehicles.ts`). Para subir
-el nivel visual, reemplázalos por modelos glTF.
+En `vehicles/` hay un recorte del *Car Kit* de Kenney (CC0): sedán, SUV, taxi,
+policía, furgoneta, camión, ambulancia y el SUV que usa el jeep. Las ruedas van
+aparte para que Rapier las coloque. Comparten `Textures/colormap.png`.
 
 ## De dónde sacarlos (licencia libre)
 

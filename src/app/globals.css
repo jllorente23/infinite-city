@@ -16,6 +16,39 @@ html, body {
 }
 
 .stage { position: fixed; inset: 0; background: #9fb3c8; }
+
+.preloader {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: #0e1218;
+  color: #e9e7e0;
+}
+.preloader-title { font-size: 22px; font-weight: 500; letter-spacing: 0.04em; }
+.preloader-cap { font-size: 13px; opacity: 0.7; }
+.preloader-bar {
+  width: 168px;
+  height: 3px;
+  border-radius: 2px;
+  background: #243044;
+  overflow: hidden;
+}
+.preloader-bar i {
+  display: block;
+  height: 100%;
+  width: 42%;
+  background: #c6d6e8;
+  animation: preload 1.15s ease-in-out infinite;
+}
+@keyframes preload {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(280%); }
+}
 .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 
 .hud {

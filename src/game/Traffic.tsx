@@ -9,6 +9,7 @@ import { heightAt } from './rng';
 import { makeVehicle, pickHue, specOf, vehicleHeight, VehicleKind } from './vehicles';
 import { playerPos, qualityOf, useGame } from './store';
 import { signalState } from './signals';
+import { useCityCars } from './carModels';
 
 const KINDS: VehicleKind[] = ['sedan', 'sedan', 'suv', 'taxi', 'pickup', 'van', 'bus', 'police', 'ambulance'];
 const DIR_YAW = [-Math.PI / 2, Math.PI, Math.PI / 2, 0];
@@ -18,6 +19,10 @@ const RIGHT_OF = [3, 0, 1, 2];
 const LANE = 3.5;
 /** Bumper to bumper distance a car will not close in on. */
 const MIN_GAP = 4.6;
+/** Still on screen; do not recycle if the car is ahead of the player. */
+const KEEP = 210;
+/** Hard recycle even if the car is still ahead. */
+const RECYCLE = 360;
 /** Comfortable deceleration, which sets how early a car starts slowing. */
 const BRAKE = 7;
 /** Where a car waits on red, measured from the middle of the junction. */
@@ -114,7 +119,21 @@ function bezier2(out: THREE.Vector3, p0: [number, number], p1: [number, number],
  * Kinematic bodies stay on the pavement; the mesh is tilted to the slope so
  * the wheels do not hover on hills.
  */
+function aheadOfPlayer(x: number, z: number) {
+  const hx = -Math.sin(playerPos.heading);
+  const hz = -Math.cos(playerPos.heading);
+  return (x - playerPos.x) * hx + (z - playerPos.z) * hz > -6;
+}
+
+function shouldRecycle(x: number, z: number) {
+  const d = Math.hypot(x - playerPos.x, z - playerPos.z);
+  if (d > RECYCLE) return true;
+  if (d > KEEP && !aheadOfPlayer(x, z)) return true;
+  return false;
+}
+
 export function Traffic() {
+  useCityCars();
   const seed = useGame((s) => s.seed);
   const quality = useGame((s) => s.quality);
   const count = qualityOf(quality).traffic;
@@ -227,9 +246,11 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
     const a = agent.current;
     a.arc = null;
     a.plan = null;
-    for (let attempt = 0; attempt < 12; attempt++) {
-      const ang = Math.random() * Math.PI * 2;
-      const d = 60 + Math.random() * 170;
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const behind = playerPos.heading + Math.PI + (Math.random() - 0.5) * 2.2;
+      const side = playerPos.heading + (Math.random() < 0.5 ? 1 : -1) * (1.05 + Math.random() * 0.7);
+      const ang = attempt % 3 === 0 ? side : behind;
+      const d = 100 + Math.random() * 150;
       const alongX = Math.random() < 0.5;
       const dir = alongX ? (Math.random() < 0.5 ? 0 : 2) : Math.random() < 0.5 ? 1 : 3;
       const px = playerPos.x + Math.cos(ang) * d;
@@ -248,6 +269,7 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
         }
       }
       if (!clear) continue;
+      if (d < 160 && aheadOfPlayer(probe.x, probe.z)) continue;
 
       a.dir = dir;
       a.center = center;
@@ -338,7 +360,7 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
       const here = a.arc
         ? bezier2(_pos, a.arc.p0, a.arc.p1, a.arc.p2, a.arc.t)
         : laneOf(a.dir, a.center, a.along);
-      if (Math.hypot(playerPos.x - here.x, playerPos.z - here.z) > 260) respawn();
+      if (shouldRecycle(here.x, here.z)) respawn();
       return;
     }
 
@@ -400,7 +422,7 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
     spin.current -= (a.speed * dt) / spec.wr;
     if (model.wheels) for (const w of model.wheels) w.rotation.x = spin.current;
 
-    if (Math.hypot(playerPos.x - here.x, playerPos.z - here.z) > 260) respawn();
+    if (shouldRecycle(here.x, here.z)) respawn();
   });
 
   return (
