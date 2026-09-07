@@ -4,6 +4,7 @@ import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
 import { cityProps, LAMP_HEAD, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
 import { cityNature, GROUND_KINDS, NatureKind, TREE_KINDS } from './nature';
+import { cityBuildings, HOUSE_KINDS, MID_KINDS, TOWER_KINDS, BuildingKind } from './buildings';
 import { cloneVehicle, pickHue, VehicleKind } from './vehicles';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -306,6 +307,13 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         boxes.push({ pos: [cx - rim + thick, hc + 0.85, cz], half: [thick, rh, rim - thick] });
         boxes.push({ pos: [cx + rim - thick, hc + 0.85, cz], half: [thick, rh, rim - thick] });
         for (let k = 0; k < 4; k++) {
+          const ang = (k * Math.PI) / 2 + 0.4;
+          const bx = cx + Math.cos(ang) * 8.2;
+          const bz = cz + Math.sin(ang) * 8.2;
+          flat(geos.bench, mats.wood, bx, hc + 0.42, bz, ang + Math.PI / 2);
+          flat(geos.benchBack, mats.wood, bx - Math.cos(ang) * 0.22, hc + 0.72, bz - Math.sin(ang) * 0.22, ang + Math.PI / 2);
+        }
+        for (let k = 0; k < 4; k++) {
           trees.push({ x: cx + (k % 2 ? 1 : -1) * (inner / 2 - 2), z: cz + (k < 2 ? 1 : -1) * (inner / 2 - 2), s: 1.1, kind: TREE_KINDS[k % TREE_KINDS.length] });
         }
       } else {
@@ -326,7 +334,38 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       const layout = rnd();
 
       const addB = (x: number, z: number, w: number, d: number, h: number) => {
-        const y = heightAt(x, z) + h / 2 - 1.05;
+        const gy = heightAt(x, z);
+        const catalog = cityBuildings();
+        let kind: BuildingKind;
+        if (type === 'tower') kind = TOWER_KINDS[Math.floor(rnd() * TOWER_KINDS.length)];
+        else if (type === 'low') kind = HOUSE_KINDS[Math.floor(rnd() * HOUSE_KINDS.length)];
+        else kind = MID_KINDS[Math.floor(rnd() * MID_KINDS.length)];
+
+        if (catalog) {
+          const b = catalog[kind];
+          const fit = Math.min(w / b.size.w, d / b.size.d);
+          const sx = fit;
+          const sz = fit;
+          const sy = Math.max(0.72, Math.min(1.35, h / b.size.h));
+          const bw = b.size.w * sx;
+          const bh = b.size.h * sy;
+          const bd = b.size.d * sz;
+          boxes.push({ pos: [x, gy + bh / 2, z], half: [bw / 2, bh / 2, bd / 2] });
+          if (far) {
+            farBoxes.push({ w: bw, h: bh, d: bd, x, y: gy + bh / 2, z, color: PALETTE[Math.floor(rnd() * PALETTE.length)] });
+            return;
+          }
+          const mesh = new THREE.Mesh(b.geometry, b.material);
+          mesh.position.set(x, gy, z);
+          mesh.scale.set(sx, sy, sz);
+          mesh.rotation.y = rnd() < 0.5 ? 0 : Math.PI;
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          group.add(mesh);
+          return;
+        }
+
+        const y = gy + h / 2 - 1.05;
         boxes.push({ pos: [x, y, z], half: [w / 2, h / 2 + 1.25, d / 2] });
         if (far) {
           farBoxes.push({ w, h: h + 2.5, d, x, y, z, color: PALETTE[Math.floor(rnd() * PALETTE.length)] });
@@ -339,22 +378,6 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         mesh.position.set(x, y, z);
         mesh.castShadow = true; mesh.receiveShadow = true;
         group.add(mesh);
-        let topY = heightAt(x, z) + h + 0.2;
-        if (type === 'tower' && rnd() < 0.55) {
-          const g2 = buildingGeo(w * 0.62, h * 0.32, d * 0.62);
-          trash.push(g2);
-          const m2 = new THREE.Mesh(g2, [side, side, mats.roof, mats.roof, side, side]);
-          m2.position.set(x, topY + h * 0.16, z);
-          m2.castShadow = true;
-          group.add(m2);
-          topY += h * 0.32;
-        }
-        if (detail && rnd() < 0.6) {
-          const hv = new THREE.Mesh(geos.hvac, mats.hvac);
-          hv.position.set(x + (rnd() - 0.5) * w * 0.4, topY + 0.5, z + (rnd() - 0.5) * d * 0.4);
-          hv.castShadow = true;
-          group.add(hv);
-        }
       };
 
       if (type === 'tower' || layout < 0.3) {
@@ -375,7 +398,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       if (rnd() < 0.6) {
         const side = rnd() < 0.5 ? 1 : -1;
         for (let k = -1; k <= 1; k += 2) {
-          trees.push({ x: cx + k * BLOCK * 0.25, z: cz + side * (BLOCK / 2 - 1.6), s: 0.7 + rnd() * 0.3, kind: 'small' });
+          trees.push({ x: cx + k * BLOCK * 0.25, z: cz + side * (BLOCK / 2 - 1.6), s: 0.75 + rnd() * 0.25, kind: 'common' });
         }
       }
       if (far && farBoxes.length) {

@@ -233,38 +233,56 @@ export function DayNight() {
         shadow-camera-bottom={-70}
         shadow-bias={-0.0008}
       />
-      <StreetGlow count={q.shadows ? 8 : 5} />
+      <StreetGlow count={q.shadows ? 16 : 10} />
     </>
   );
 }
 
-/** A handful of warm point lights that snap to the nearest street-lamp heads. */
+/**
+ * A pool of lamp lights that stay on their assigned head until it is far
+ * away, then fade to the next one. Snapping every frame made the street
+ * light up only as the car arrived.
+ */
 function StreetGlow({ count }: { count: number }) {
-  const group = useRef<THREE.Group>(null);
   const lamps = useMemo(
     () =>
-      Array.from({ length: count }, () => {
-        const l = new THREE.PointLight(0xffd89a, 0, 26, 1.6);
-        return l;
-      }),
+      Array.from({ length: count }, () => ({
+        light: new THREE.PointLight(0xffd89a, 0, 34, 1.35),
+        key: '',
+        hold: 0
+      })),
     [count]
   );
 
-  useFrame(() => {
+  useFrame((_, dt) => {
     const night = useGame.getState().night;
-    const heads = nearestLampHeads(playerPos.x, playerPos.z, count);
-    lamps.forEach((l, i) => {
-      const h = heads[i];
-      if (!h) { l.intensity = 0; return; }
-      l.position.set(h.x, h.y, h.z);
-      l.intensity = night * 22;
+    const heads = nearestLampHeads(playerPos.x, playerPos.z, count + 8);
+    const used = new Set<string>();
+    lamps.forEach((slot) => {
+      slot.hold -= dt;
+      const still = heads.find((h) => `${h.x.toFixed(0)},${h.z.toFixed(0)}` === slot.key && h.d < 78);
+      if (still && slot.hold > 0) {
+        used.add(slot.key);
+        slot.light.position.set(still.x, still.y, still.z);
+        const fade = 1 - Math.max(0, (still.d - 28) / 50);
+        slot.light.intensity = night * 26 * Math.max(0.2, fade);
+        return;
+      }
+      const next = heads.find((h) => !used.has(`${h.x.toFixed(0)},${h.z.toFixed(0)}`));
+      if (!next) { slot.light.intensity = 0; slot.key = ''; return; }
+      slot.key = `${next.x.toFixed(0)},${next.z.toFixed(0)}`;
+      slot.hold = 2.8;
+      used.add(slot.key);
+      slot.light.position.set(next.x, next.y, next.z);
+      const fade = 1 - Math.max(0, (next.d - 28) / 50);
+      slot.light.intensity = night * 26 * Math.max(0.2, fade);
     });
   });
 
   return (
-    <group ref={group}>
-      {lamps.map((l, i) => (
-        <primitive key={i} object={l} />
+    <group>
+      {lamps.map((s, i) => (
+        <primitive key={i} object={s.light} />
       ))}
     </group>
   );

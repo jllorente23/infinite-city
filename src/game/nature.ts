@@ -5,27 +5,27 @@ import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 
 /**
- * Kenney Nature Kit models sit at roughly one metre per unit. City trees want
- * to be 6–10 m, so they are scaled here and the origin is shifted to the
- * ground plane (the kit buries the trunk 5 cm).
+ * Quaternius Ultimate Nature Pack (CC0). The models already sit near city
+ * metres; a small extra scale plants a 8–11 m tree. Vertex colours come from
+ * the authored materials (bark / leaf / flower), so they are not white cubes.
  */
 export const NATURE = {
-  oak: { url: '/models/nature/tree_oak.glb', scale: 7.2 },
-  tall: { url: '/models/nature/tree_tall.glb', scale: 6.4 },
-  default: { url: '/models/nature/tree_default.glb', scale: 6.2 },
-  pine: { url: '/models/nature/tree_pineDefaultA.glb', scale: 6.8 },
-  small: { url: '/models/nature/tree_small.glb', scale: 5.6 },
-  bush: { url: '/models/nature/plant_bushDetailed.glb', scale: 5.4 },
-  bushSmall: { url: '/models/nature/plant_bushSmall.glb', scale: 4.8 },
-  grass: { url: '/models/nature/grass_large.glb', scale: 3.6 },
-  flowerY: { url: '/models/nature/flower_yellowA.glb', scale: 4.2 },
-  flowerR: { url: '/models/nature/flower_redA.glb', scale: 4.2 },
-  flowerP: { url: '/models/nature/flower_purpleA.glb', scale: 4.2 }
+  common: { url: '/models/nature/CommonTree_1.glb', scale: 3.8 },
+  commonB: { url: '/models/nature/CommonTree_3.glb', scale: 4.1 },
+  birch: { url: '/models/nature/BirchTree_2.glb', scale: 3.9 },
+  pine: { url: '/models/nature/PineTree_2.glb', scale: 4.4 },
+  willow: { url: '/models/nature/Willow_1.glb', scale: 3.6 },
+  bush: { url: '/models/nature/Bush_1.glb', scale: 3.4 },
+  berries: { url: '/models/nature/BushBerries_1.glb', scale: 3.2 },
+  flowers: { url: '/models/nature/Flowers.glb', scale: 2.8 },
+  plant: { url: '/models/nature/Plant_2.glb', scale: 2.6 },
+  grass: { url: '/models/nature/Grass_2.glb', scale: 2.4 },
+  rock: { url: '/models/nature/Rock_Moss_1.glb', scale: 2.2 }
 } as const;
 
 export type NatureKind = keyof typeof NATURE;
-export const TREE_KINDS: NatureKind[] = ['oak', 'tall', 'default', 'pine', 'small'];
-export const GROUND_KINDS: NatureKind[] = ['bush', 'bushSmall', 'grass', 'flowerY', 'flowerR', 'flowerP'];
+export const TREE_KINDS: NatureKind[] = ['common', 'commonB', 'birch', 'pine', 'willow'];
+export const GROUND_KINDS: NatureKind[] = ['bush', 'berries', 'flowers', 'plant', 'grass', 'rock'];
 
 export type NatureMesh = { geometry: THREE.BufferGeometry; material: THREE.Material };
 export type CityNature = Record<NatureKind, NatureMesh>;
@@ -46,6 +46,17 @@ function mergeMeshes(scene: THREE.Object3D, scale: number): NatureMesh {
     raw.applyMatrix4(mesh.matrixWorld);
     const flat = raw.index ? raw.toNonIndexed() : raw;
     if (flat !== raw) raw.dispose();
+    const mat = mesh.material as THREE.MeshStandardMaterial;
+    if (!flat.attributes.color && mat?.color) {
+      const n = flat.attributes.position.count;
+      const col = new Float32Array(n * 3);
+      for (let k = 0; k < n; k++) {
+        col[k * 3] = mat.color.r;
+        col[k * 3 + 1] = mat.color.g;
+        col[k * 3 + 2] = mat.color.b;
+      }
+      flat.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    }
     parts.push(flat);
   });
   if (!parts.length) throw new Error('nature file contains no mesh');
@@ -56,11 +67,12 @@ function mergeMeshes(scene: THREE.Object3D, scale: number): NatureMesh {
   const col = new Float32Array(vCount * 3);
   const nor = new Float32Array(vCount * 3);
   let off = 0;
+  let hadNormal = false;
   for (const g of parts) {
     const n = g.attributes.position.count;
     const src = g.attributes;
     pos.set(src.position.array as Float32Array, off * 3);
-    if (src.normal) nor.set(src.normal.array as Float32Array, off * 3);
+    if (src.normal) { nor.set(src.normal.array as Float32Array, off * 3); hadNormal = true; }
     if (src.color) {
       const arr = src.color.array as Float32Array;
       const stride = src.color.itemSize;
@@ -70,7 +82,7 @@ function mergeMeshes(scene: THREE.Object3D, scale: number): NatureMesh {
         col[(off + k) * 3 + 2] = arr[k * stride + 2];
       }
     } else {
-      for (let k = 0; k < n; k++) { col[(off + k) * 3] = 1; col[(off + k) * 3 + 1] = 1; col[(off + k) * 3 + 2] = 1; }
+      for (let k = 0; k < n; k++) { col[(off + k) * 3] = 0.35; col[(off + k) * 3 + 1] = 0.55; col[(off + k) * 3 + 2] = 0.28; }
     }
     off += n;
     g.dispose();
@@ -81,7 +93,7 @@ function mergeMeshes(scene: THREE.Object3D, scale: number): NatureMesh {
   geometry.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   geometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geometry.scale(scale, scale, scale);
-  if (!parts.some((g) => g.attributes.normal)) geometry.computeVertexNormals();
+  if (!hadNormal) geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   const box = geometry.boundingBox!;
   geometry.translate(-((box.min.x + box.max.x) / 2), -box.min.y, -((box.min.z + box.max.z) / 2));
@@ -92,35 +104,35 @@ function mergeMeshes(scene: THREE.Object3D, scale: number): NatureMesh {
 }
 
 export function useCityNature(): CityNature {
-  const oak = useGLTF(NATURE.oak.url);
-  const tall = useGLTF(NATURE.tall.url);
-  const def = useGLTF(NATURE.default.url);
+  const common = useGLTF(NATURE.common.url);
+  const commonB = useGLTF(NATURE.commonB.url);
+  const birch = useGLTF(NATURE.birch.url);
   const pine = useGLTF(NATURE.pine.url);
-  const small = useGLTF(NATURE.small.url);
+  const willow = useGLTF(NATURE.willow.url);
   const bush = useGLTF(NATURE.bush.url);
-  const bushSmall = useGLTF(NATURE.bushSmall.url);
+  const berries = useGLTF(NATURE.berries.url);
+  const flowers = useGLTF(NATURE.flowers.url);
+  const plant = useGLTF(NATURE.plant.url);
   const grass = useGLTF(NATURE.grass.url);
-  const flowerY = useGLTF(NATURE.flowerY.url);
-  const flowerR = useGLTF(NATURE.flowerR.url);
-  const flowerP = useGLTF(NATURE.flowerP.url);
+  const rock = useGLTF(NATURE.rock.url);
 
   return useMemo(() => {
     const baked: CityNature = {
-      oak: mergeMeshes(oak.scene, NATURE.oak.scale),
-      tall: mergeMeshes(tall.scene, NATURE.tall.scale),
-      default: mergeMeshes(def.scene, NATURE.default.scale),
+      common: mergeMeshes(common.scene, NATURE.common.scale),
+      commonB: mergeMeshes(commonB.scene, NATURE.commonB.scale),
+      birch: mergeMeshes(birch.scene, NATURE.birch.scale),
       pine: mergeMeshes(pine.scene, NATURE.pine.scale),
-      small: mergeMeshes(small.scene, NATURE.small.scale),
+      willow: mergeMeshes(willow.scene, NATURE.willow.scale),
       bush: mergeMeshes(bush.scene, NATURE.bush.scale),
-      bushSmall: mergeMeshes(bushSmall.scene, NATURE.bushSmall.scale),
+      berries: mergeMeshes(berries.scene, NATURE.berries.scale),
+      flowers: mergeMeshes(flowers.scene, NATURE.flowers.scale),
+      plant: mergeMeshes(plant.scene, NATURE.plant.scale),
       grass: mergeMeshes(grass.scene, NATURE.grass.scale),
-      flowerY: mergeMeshes(flowerY.scene, NATURE.flowerY.scale),
-      flowerR: mergeMeshes(flowerR.scene, NATURE.flowerR.scale),
-      flowerP: mergeMeshes(flowerP.scene, NATURE.flowerP.scale)
+      rock: mergeMeshes(rock.scene, NATURE.rock.scale)
     };
     cache = baked;
     return baked;
-  }, [oak, tall, def, pine, small, bush, bushSmall, grass, flowerY, flowerR, flowerP]);
+  }, [common, commonB, birch, pine, willow, bush, berries, flowers, plant, grass, rock]);
 }
 
 for (const spec of Object.values(NATURE)) useGLTF.preload(spec.url);

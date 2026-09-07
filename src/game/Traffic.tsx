@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RapierRigidBody, RigidBody, CuboidCollider } from '@react-three/rapier';
 import { CELL } from './config';
-import { heightAt, slopeNormal } from './rng';
+import { heightAt } from './rng';
 import { makeVehicle, pickHue, specOf, vehicleHeight, VehicleKind } from './vehicles';
 import { playerPos, qualityOf, useGame } from './store';
 import { signalState } from './signals';
@@ -17,7 +17,7 @@ const RIGHT_OF = [3, 0, 1, 2];
 /** Offset from the street centreline to a lane centreline. */
 const LANE = 3.5;
 /** Bumper to bumper distance a car will not close in on. */
-const MIN_GAP = 3.2;
+const MIN_GAP = 4.6;
 /** Comfortable deceleration, which sets how early a car starts slowing. */
 const BRAKE = 7;
 /** Where a car waits on red, measured from the middle of the junction. */
@@ -26,12 +26,15 @@ const STOP_LINE = 8.5;
 const TURN_IN = 7;
 
 const UP = new THREE.Vector3(0, 1, 0);
-const _n = { x: 0, y: 1, z: 0 };
 const _slope = new THREE.Vector3();
 const _qTilt = new THREE.Quaternion();
 const _qYaw = new THREE.Quaternion();
 const _rot = new THREE.Quaternion();
 const _pos = new THREE.Vector3();
+const _fwd = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _world = { x: 0, z: 0 };
+const _other = { x: 0, z: 0 };
 
 /**
  * Fastest speed from which the car can still stop in `distance` without closing
@@ -134,29 +137,70 @@ export function Traffic() {
   );
 }
 
-/** Nearest car ahead in the same lane, or null when the road is clear. */
-function leaderAhead(self: Agent) {
-  if (self.arc) return null;
-  let bestGap = Infinity;
-  let leader: Agent | null = null;
-  const sgn = headingSign(self.dir);
-  for (const other of agents) {
-    if (other === self || !other.live || other.arc) continue;
-    if (other.dir !== self.dir || other.center !== self.center) continue;
-    const ahead = (other.along - self.along) * sgn;
-    if (ahead <= 0) continue;
-    const gap = ahead - (self.len + other.len) / 2;
-    if (gap < bestGap) { bestGap = gap; leader = other; }
+function agentWorld(a: Agent, out: { x: number; z: number }) {
+  if (a.arc) {
+    bezier2(_pos, a.arc.p0, a.arc.p1, a.arc.p2, a.arc.t);
+    out.x = _pos.x;
+    out.z = _pos.z;
+  } else {
+    const p = laneOf(a.dir, a.center, a.along);
+    out.x = p.x;
+    out.z = p.z;
   }
-  return leader ? { gap: bestGap, speed: leader.speed } : null;
+  return out;
 }
 
-function poseOnGround(x: number, z: number, yaw: number, out: THREE.Quaternion) {
-  slopeNormal(x, z, _n);
-  _slope.set(_n.x, _n.y, _n.z);
+/** Anyone ahead in world space, including cars mid-turn, not just the same lane. */
+function nearestThreat(self: Agent) {
+  agentWorld(self, _world);
+  const yaw = self.arc ? lerpAngle(self.arc.yaw0, self.arc.yaw1, self.arc.t) : DIR_YAW[self.dir];
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  let bestGap = Infinity;
+  let leadSpeed = 0;
+  for (const other of agents) {
+    if (other === self || !other.live) continue;
+    agentWorld(other, _other);
+    const dx = _other.x - _world.x;
+    const dz = _other.z - _world.z;
+    const dist = Math.hypot(dx, dz);
+    const need = (self.len + other.len) / 2 + MIN_GAP + 8;
+    if (dist > need) continue;
+    const ahead = dx * fx + dz * fz;
+    if (ahead < -0.5) continue;
+    const lateral = Math.abs(dx * -fz + dz * fx);
+    if (lateral > 4.2 && !other.arc && !self.arc) continue;
+    const gap = dist - (self.len + other.len) / 2;
+    if (gap < bestGap) {
+      bestGap = gap;
+      leadSpeed = other.speed;
+    }
+  }
+  return bestGap < Infinity ? { gap: bestGap, speed: leadSpeed } : null;
+}
+
+/**
+ * Tilt from the four corners of the wheelbase so a sloped street does not
+ * leave the car flat with two wheels in the air.
+ */
+function poseOnGround(x: number, z: number, yaw: number, halfL: number, halfW: number, out: THREE.Quaternion) {
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  const rx = Math.cos(yaw);
+  const rz = -Math.sin(yaw);
+  const yF = heightAt(x + fx * halfL, z + fz * halfL);
+  const yB = heightAt(x - fx * halfL, z - fz * halfL);
+  const yR = heightAt(x + rx * halfW, z + rz * halfW);
+  const yL = heightAt(x - rx * halfW, z - rz * halfW);
+  _fwd.set(fx * 2 * halfL, yF - yB, fz * 2 * halfL);
+  _right.set(rx * 2 * halfW, yR - yL, rz * 2 * halfW);
+  _slope.crossVectors(_right, _fwd);
+  if (_slope.y < 0) _slope.negate();
+  _slope.normalize();
   _qTilt.setFromUnitVectors(UP, _slope);
   _qYaw.setFromAxisAngle(UP, yaw);
   out.copy(_qTilt).multiply(_qYaw);
+  return (yF + yB + yR + yL) * 0.25;
 }
 
 function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue: number }) {
@@ -193,11 +237,15 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
       const center = Math.round((alongX ? pz : px) / CELL) * CELL;
       const along = alongX ? px : pz;
 
+      const probe = laneOf(dir, center, along);
       let clear = true;
       for (const other of agents) {
         if (other === a || !other.live) continue;
-        if (other.dir !== dir || other.center !== center) continue;
-        if (Math.abs(other.along - along) < other.len + a.len + MIN_GAP) { clear = false; break; }
+        agentWorld(other, _other);
+        if (Math.hypot(probe.x - _other.x, probe.z - _other.z) < other.len + a.len + MIN_GAP) {
+          clear = false;
+          break;
+        }
       }
       if (!clear) continue;
 
@@ -214,8 +262,7 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
   };
 
   const placeAt = (x: number, z: number, yaw: number, snap = false) => {
-    const y = heightAt(x, z);
-    poseOnGround(x, z, yaw, _rot);
+    const y = poseOnGround(x, z, yaw, spec.L * 0.42, spec.W * 0.42, _rot);
     if (snap) {
       body.current?.setTranslation({ x, y, z }, true);
       body.current?.setRotation(_rot, true);
@@ -331,7 +378,7 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
       a.plan = null;
     }
 
-    const lead = leaderAhead(a);
+    const lead = nearestThreat(a);
     if (lead) hold(lead.gap - MIN_GAP, lead.speed);
 
     const dx = playerPos.x - here.x;

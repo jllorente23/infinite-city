@@ -9,6 +9,7 @@ import { playerPos, qualityOf, useGame } from './store';
 import { setTerrainSeed } from './rng';
 import { useCityProps } from './props';
 import { useCityNature } from './nature';
+import { useCityBuildings } from './buildings';
 import { signalState } from './signals';
 
 type Slot = { key: string; i: number; j: number; lod: number };
@@ -36,6 +37,7 @@ export function City() {
   // chunks that generate already have them and no block is left with placeholders.
   useCityProps();
   useCityNature();
+  useCityBuildings();
 
   const [cells, setCells] = useState<Slot[]>([]);
   const center = useRef({ i: NaN, j: NaN });
