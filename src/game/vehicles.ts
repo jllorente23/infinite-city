@@ -217,6 +217,23 @@ function mountWheels(g: VehicleGroup, spec: Spec, simple: boolean, truck = false
   return wheels;
 }
 
+/** The Car Kit atlas contains painted lenses, but they cannot glow. Add small
+ * emissive lenses to every glTF body so traffic remains readable at night. */
+function addKitLights(g: VehicleGroup, kind: VehicleKind, spec: Spec, simple: boolean) {
+  const m = vehicleMats();
+  const front = -spec.L / 2 - 0.025;
+  const rear = spec.L / 2 + 0.025;
+  const x = spec.W / 2 - 0.34;
+  const y = spec.bottom + (kind === 'bus' || kind === 'ambulance' ? 0.72 : 0.48);
+  for (const side of [-1, 1]) {
+    pbox(g, m.head, 0.34, 0.18, 0.07, side * x, y, front);
+    pbox(g, m.brake, 0.32, 0.18, 0.07, side * x, y, rear);
+  }
+  if (!simple && kind === 'jeep') {
+    pbox(g, m.head, 0.5, 0.12, 0.06, 0, y - 0.2, front);
+  }
+}
+
 /** Body only, no wheels: used by the physics car, which places wheels from the solver. */
 export function makeChassis(kind: VehicleKind, hex: number, simple = false) {
   const m = vehicleMats();
@@ -226,6 +243,13 @@ export function makeChassis(kind: VehicleKind, hex: number, simple = false) {
   const kit = kitBody(kind);
   if (kit) {
     g.add(kit);
+    addKitLights(g, kind, spec, simple);
+    if (kind === 'jeep') {
+      const spare = makeWheel(spec.wr * 0.92, spec.wr * 0.62, true);
+      spare.rotation.y = Math.PI / 2;
+      spare.position.set(0, spec.bottom + 0.86, spec.L / 2 + 0.24);
+      g.add(spare);
+    }
     return g;
   }
   const base = kind === 'taxi' || kind === 'police' ? 'sedan' : kind === 'ambulance' ? 'van' : kind;

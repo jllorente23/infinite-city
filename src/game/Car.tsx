@@ -56,15 +56,15 @@ export function Car() {
     });
     g.traverse((o: any) => { if (o.isMesh) o.castShadow = true; });
     const mkSpot = (x: number) => {
-      const light = new THREE.SpotLight(0xfff1c4, 0, 28, 0.36, 0.62, 1.4);
-      light.position.set(x, 0.82, -2.05);
-      light.target.position.set(x * 0.2, -0.15, -18);
+      const light = new THREE.SpotLight(0xfff1c4, 0, 44, 0.42, 0.58, 1.25);
+      light.position.set(x, 0.9, -2.08);
+      light.target.position.set(x * 0.18, -0.2, -22);
       g.add(light);
       g.add(light.target);
       return light;
     };
     const spots = [mkSpot(-0.62), mkSpot(0.62)];
-    const fill = new THREE.PointLight(0xffe4b0, 0, 7, 2.2);
+    const fill = new THREE.PointLight(0xffe4b0, 0, 10, 1.8);
     fill.position.set(0, 0.72, -2.15);
     g.add(fill);
     const halfY = (HULL_TOP - s.bottom) / 2;
@@ -97,6 +97,9 @@ export function Car() {
   const fwd = useMemo(() => new THREE.Vector3(), []);
   const up = useMemo(() => new THREE.Vector3(), []);
   const goal = useMemo(() => new THREE.Vector3(), []);
+  const lookGoal = useMemo(() => new THREE.Vector3(), []);
+  const bodyQuat = useMemo(() => new THREE.Quaternion(), []);
+  const lookAtPos = useRef(new THREE.Vector3(0, 1.2, -5));
   const spin = useRef(0);
   const flipped = useRef(0);
 
@@ -177,8 +180,11 @@ export function Car() {
 
     const t = rb.translation();
     const r = rb.rotation();
-    chassis.position.set(t.x, t.y, t.z);
-    chassis.quaternion.set(r.x, r.y, r.z, r.w);
+    const visualAlpha = 1 - Math.exp(-delta * 28);
+    goal.set(t.x, t.y, t.z);
+    chassis.position.lerp(goal, visualAlpha);
+    bodyQuat.set(r.x, r.y, r.z, r.w);
+    chassis.quaternion.slerp(bodyQuat, visualAlpha);
 
     const speed = forwardSpeed();
     // rolling backwards about +X carries the car towards -Z, which is forwards here
@@ -222,13 +228,15 @@ export function Car() {
     goal.y = Math.max(heightAt(goal.x, goal.z), t.y - 1) + 4.6;
     camPos.current.lerp(goal, 1 - Math.pow(0.0015, delta));
     camera.position.copy(camPos.current);
-    camera.lookAt(t.x + fwd.x * 5, t.y + 1.2, t.z + fwd.z * 5);
+    lookGoal.set(t.x + fwd.x * 5, t.y + 1.2, t.z + fwd.z * 5);
+    lookAtPos.current.lerp(lookGoal, 1 - Math.pow(0.0004, delta));
+    camera.lookAt(lookAtPos.current);
 
     const night = useGame.getState().night;
-    const beams = night > 0.28 ? night : 0;
-    spots[0].intensity = beams * 18;
-    spots[1].intensity = beams * 18;
-    fill.intensity = beams * 2.2;
+    const beams = night > 0.18 ? night : 0;
+    spots[0].intensity = beams * 42;
+    spots[1].intensity = beams * 42;
+    fill.intensity = beams * 5.5;
 
     setHud({ speed: Math.round(Math.abs(speed) * 3.6) });
   });

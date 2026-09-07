@@ -120,7 +120,7 @@ function useSignalLights(data: ChunkData, seed: number, active: boolean) {
     acc.current += delta;
     if (acc.current < 0.15) return;
     acc.current = 0;
-    const clock = useGame.getState().clock * 60; // hud clock is in hours
+    const clock = useGame.getState().clock;
     for (const s of data.signals) {
       const st = signalState(seed, s.nx, s.nz, s.axisX, clock);
       s.dots[0].visible = st === 0;

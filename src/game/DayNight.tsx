@@ -9,21 +9,21 @@ import { cloudPuffUrl, createAssets } from './textures';
 import { vehicleMats } from './vehicles';
 import { playerPos, qualityOf, useGame } from './store';
 import { heightAt } from './rng';
-import { LAMP_HEAD } from './props';
+import { LAMP_HEAD, propYaw } from './props';
 
 const DAY_TOP = new THREE.Color(0x5f8fd6);
 const DAY_HOR = new THREE.Color(0xc6d6e8);
 const SET_TOP = new THREE.Color(0x4d4278);
 const SET_HOR = new THREE.Color(0xf0a266);
-const NIGHT_TOP = new THREE.Color(0x0d1c3a);
-const NIGHT_HOR = new THREE.Color(0x1e3d68);
+const NIGHT_TOP = new THREE.Color(0x12284b);
+const NIGHT_HOR = new THREE.Color(0x315b88);
 const SUN_DAY = new THREE.Color(0xfff0d6);
 const SUN_LOW = new THREE.Color(0xffb070);
 const MOON = new THREE.Color(0xb7c8ee);
 const HEMI_DAY = new THREE.Color(0xe8f0fa);
-const HEMI_NIGHT = new THREE.Color(0x6b8fc4);
+const HEMI_NIGHT = new THREE.Color(0x8ba9d2);
 const GROUND_DAY = new THREE.Color(0x5e6670);
-const GROUND_NIGHT = new THREE.Color(0x1a2a3c);
+const GROUND_NIGHT = new THREE.Color(0x293c52);
 
 const CLOUD_DAY = new THREE.Color(0xffffff);
 const CLOUD_SET = new THREE.Color(0xffc79a);
@@ -155,17 +155,17 @@ export function DayNight() {
       } else {
         sun.current.position.set(playerPos.x - dir.x * 110, -dir.y * 110, playerPos.z - dir.z * 110);
         sun.current.color.copy(MOON);
-        sun.current.intensity = 0.72 * night;
+        sun.current.intensity = 0.9 * night;
       }
       sun.current.target.position.set(playerPos.x, 0, playerPos.z);
       sun.current.target.updateMatrixWorld();
     }
     if (hemi.current) {
-      hemi.current.intensity = 0.48 + 0.52 * day;
+      hemi.current.intensity = 0.64 + 0.36 * day;
       hemi.current.color.copy(HEMI_NIGHT).lerp(HEMI_DAY, day);
       hemi.current.groundColor.copy(GROUND_NIGHT).lerp(GROUND_DAY, day);
     }
-    state.gl.toneMappingExposure = 1.02 + night * 0.06;
+    state.gl.toneMappingExposure = 1.05 + night * 0.12;
 
     (stars.material as THREE.PointsMaterial).opacity = Math.pow(night, 2) * 0.9;
     sky.mesh.position.copy(state.camera.position);
@@ -190,14 +190,14 @@ export function DayNight() {
     const { mats } = assets;
     for (const f of mats.facades) f.emissiveIntensity = night * 1.1;
     mats.merged.emissiveIntensity = night * 1.1;
-    mats.glow.opacity = night * 0.28;
-    mats.bulb.emissiveIntensity = 0.18 + night * 0.55;
+    mats.glow.opacity = night * 0.42;
+    mats.bulb.emissiveIntensity = 0.2 + night * 0.9;
     mats.mallGlass.emissiveIntensity = night * 0.5;
 
     const vm = vehicleMats();
     const lightsOn = day < 0.55;
-    vm.head.emissiveIntensity = lightsOn ? 2.4 : 0;
-    vm.brake.emissiveIntensity = lightsOn ? 0.85 : 0.15;
+    vm.head.emissiveIntensity = lightsOn ? 3.4 : 0;
+    vm.brake.emissiveIntensity = lightsOn ? 1.05 : 0.15;
     const envI = 0.25 + day;
     for (const key of Object.keys(vm.body)) vm.body[Number(key)].envMapIntensity = envI;
     vm.glass.envMapIntensity = envI;
@@ -233,7 +233,7 @@ export function DayNight() {
         shadow-camera-bottom={-70}
         shadow-bias={-0.0008}
       />
-      <StreetGlow count={q.shadows ? 10 : 6} />
+      <StreetGlow count={q.shadows ? 14 : 8} />
     </>
   );
 }
@@ -247,7 +247,7 @@ function StreetGlow({ count }: { count: number }) {
   const lamps = useMemo(
     () =>
       Array.from({ length: count }, () => ({
-        light: new THREE.PointLight(0xffd89a, 0, 24, 2),
+        light: new THREE.PointLight(0xffd89a, 0, 32, 1.8),
         key: '',
         want: 0
       })),
@@ -256,23 +256,29 @@ function StreetGlow({ count }: { count: number }) {
 
   useFrame((_, dt) => {
     const night = useGame.getState().night;
-    const heads = nearestLampHeads(playerPos.x, playerPos.z, count + 6);
-    const used = new Set<string>();
-    lamps.forEach((slot) => {
-      const still = heads.find((h) => `${h.x.toFixed(0)},${h.z.toFixed(0)}` === slot.key && h.d < 64);
-      const dest = still ?? heads.find((h) => !used.has(`${h.x.toFixed(0)},${h.z.toFixed(0)}`));
+    const heads = nearestLampHeads(playerPos.x, playerPos.z, count + 10);
+    const keyOf = (h: { x: number; z: number }) => `${h.x.toFixed(1)},${h.z.toFixed(1)}`;
+    const retained = lamps.map((slot) => heads.find((h) => keyOf(h) === slot.key && h.d < 82));
+    const used = new Set(retained.filter(Boolean).map((h) => keyOf(h!)));
+
+    lamps.forEach((slot, index) => {
+      let dest = retained[index];
       if (!dest) {
         slot.want = 0;
+        slot.light.intensity += (0 - slot.light.intensity) * Math.min(1, dt * 4.5);
+        // Never move a lit point light: retire it first, then fade in the new
+        // post. Moving it at full intensity caused the old flashing artifact.
+        if (slot.light.intensity > 0.06) return;
         slot.key = '';
-        slot.light.intensity += (0 - slot.light.intensity) * Math.min(1, dt * 4);
-        return;
+        dest = heads.find((h) => !used.has(keyOf(h)));
       }
-      slot.key = `${dest.x.toFixed(0)},${dest.z.toFixed(0)}`;
+      if (!dest) return;
+      slot.key = keyOf(dest);
       used.add(slot.key);
       slot.light.position.set(dest.x, dest.y, dest.z);
-      const fade = 1 - Math.max(0, (dest.d - 22) / 42);
-      slot.want = night * 6.5 * Math.max(0.15, fade);
-      slot.light.intensity += (slot.want - slot.light.intensity) * Math.min(1, dt * 3.2);
+      const fade = 1 - Math.max(0, (dest.d - 30) / 52);
+      slot.want = night * 14 * Math.max(0.12, fade);
+      slot.light.intensity += (slot.want - slot.light.intensity) * Math.min(1, dt * 2.8);
     });
   });
 
@@ -293,10 +299,16 @@ function nearestLampHeads(x: number, z: number, n: number) {
     for (let j = cj - 2; j <= cj + 2; j++) {
       const cx = i * CELL + CELL / 2;
       const cz = j * CELL + CELL / 2;
-      for (const [ex, ez] of [[-1, -1], [-1, 1], [1, -1], [1, 1]] as const) {
+      for (let k = 0; k < 4; k++) {
+        const ex = k % 2 ? 1 : -1;
+        const ez = k < 2 ? -1 : 1;
         const lx = cx + ex * (BLOCK / 2 - 1.2);
         const lz = cz + ez * (BLOCK / 2 - 1.2);
-        out.push({ x: lx, y: heightAt(lx, lz) + LAMP_HEAD.y, z: lz, d: Math.hypot(lx - x, lz - z) });
+        const armAlongX = k === 0 || k === 3;
+        const yaw = armAlongX ? propYaw(ex, 0) : propYaw(0, ez);
+        const px = lx + LAMP_HEAD.z * Math.sin(yaw);
+        const pz = lz + LAMP_HEAD.z * Math.cos(yaw);
+        out.push({ x: px, y: heightAt(lx, lz) + LAMP_HEAD.y, z: pz, d: Math.hypot(px - x, pz - z) });
       }
     }
   }

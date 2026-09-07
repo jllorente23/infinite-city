@@ -382,7 +382,7 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
     if (toNode < 42) {
       const nx = alongX ? node : a.center;
       const nz = alongX ? a.center : node;
-      const clock = useGame.getState().clock * 60;
+      const clock = useGame.getState().clock;
       const st = signalState(seed, nx, nz, alongX, clock);
       const mayGo = st === 2 || (st === 1 && toNode < 12 && a.speed > 9);
 

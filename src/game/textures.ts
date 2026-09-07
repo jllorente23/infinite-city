@@ -297,11 +297,14 @@ export function createAssets() {
     }),
     tlRed: new THREE.MeshLambertMaterial({ color: 0x5a1a14, emissive: 0xff3b22, emissiveIntensity: 0.9 }),
     tlAmber: new THREE.MeshLambertMaterial({ color: 0x4a3208, emissive: 0xffb020, emissiveIntensity: 0.9 }),
-    tlGreen: new THREE.MeshLambertMaterial({ color: 0x14401f, emissive: 0x3fe06a, emissiveIntensity: 0.9 }),
+    tlGreen: new THREE.MeshLambertMaterial({ color: 0x0f451b, emissive: 0x25ff4f, emissiveIntensity: 1.15 }),
     facades: [] as THREE.MeshLambertMaterial[],
     merged: new THREE.MeshLambertMaterial({
       map: win.map, vertexColors: true, emissive: 0xffffff, emissiveMap: win.emissive, emissiveIntensity: 0
-    })
+    }),
+    // Distant buildings are neutral silhouettes, not fake grids of glowing
+    // windows that vanish when the detailed library model streams in.
+    distant: new THREE.MeshLambertMaterial({ vertexColors: true })
   };
 
   const geos = {
@@ -331,9 +334,9 @@ export function createAssets() {
     mallSign: new THREE.BoxGeometry(6, 1.5, 0.4),
     tlPole: new THREE.CylinderGeometry(0.09, 0.12, 4.8, 6),
     tlHead: new THREE.BoxGeometry(0.34, 0.95, 0.3),
-    tlDot: new THREE.BoxGeometry(0.2, 0.2, 0.06),
-    // lens for the glTF signal, which is a good deal bigger than the boxy one
-    signalDot: new THREE.BoxGeometry(0.3, 0.3, 0.08),
+    tlDot: new THREE.CircleGeometry(0.1, 16).rotateY(Math.PI),
+    // Round emissive discs sit over the authored circular lenses.
+    signalDot: new THREE.CircleGeometry(0.15, 20).rotateY(Math.PI),
     bench: new THREE.BoxGeometry(1.7, 0.16, 0.55),
     benchBack: new THREE.BoxGeometry(1.7, 0.5, 0.12),
     bin: new THREE.CylinderGeometry(0.3, 0.26, 0.9, 8),
@@ -350,6 +353,7 @@ type Assets = {
     [k: string]: any;
     facades: THREE.MeshLambertMaterial[];
     merged: THREE.MeshLambertMaterial;
+    distant: THREE.MeshLambertMaterial;
     glow: THREE.MeshBasicMaterial;
   };
   geos: { [k: string]: THREE.BufferGeometry };

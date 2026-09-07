@@ -357,15 +357,19 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
           const bw = b.size.w * sx;
           const bh = b.size.h * sy;
           const bd = b.size.d * sz;
+          // Consume the same choices at every LOD so approaching a chunk never
+          // regenerates a different set of buildings.
+          const yaw = rnd() < 0.5 ? 0 : Math.PI;
+          const farColor = PALETTE[Math.floor(rnd() * PALETTE.length)];
           boxes.push({ pos: [x, gy + bh / 2, z], half: [bw / 2, bh / 2, bd / 2] });
           if (far) {
-            farBoxes.push({ w: bw, h: bh, d: bd, x, y: gy + bh / 2, z, color: PALETTE[Math.floor(rnd() * PALETTE.length)] });
+            farBoxes.push({ w: bw, h: bh, d: bd, x, y: gy + bh / 2, z, color: farColor });
             return;
           }
           const mesh = new THREE.Mesh(b.geometry, b.material);
           mesh.position.set(x, gy, z);
           mesh.scale.set(sx, sy, sz);
-          mesh.rotation.y = rnd() < 0.5 ? 0 : Math.PI;
+          mesh.rotation.y = yaw;
           mesh.castShadow = true;
           mesh.receiveShadow = true;
           group.add(mesh);
@@ -413,7 +417,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       if (far && farBoxes.length) {
         const mg = mergeBoxes(farBoxes);
         trash.push(mg);
-        group.add(new THREE.Mesh(mg, mats.merged));
+        group.add(new THREE.Mesh(mg, mats.distant));
       }
     }
   }
