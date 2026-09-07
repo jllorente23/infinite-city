@@ -206,7 +206,10 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     const tg = patch(cx, cz, CELL, CELL, 0, segs, segs, 0);
     trash.push(tg);
     ground = tg;
-    const tile = new THREE.Mesh(tg, type === 'avenue' ? mats.tilePlain : mats.tile);
+    // The diagonal avenue is its own glossy strip over the regular city tile.
+    // A fully asphalt base made the whole block look like roadway and left
+    // vegetation standing in the middle of it.
+    const tile = new THREE.Mesh(tg, mats.tile);
     tile.receiveShadow = true;
     group.add(tile);
     for (let k = 0; k < 4; k++) {
@@ -230,11 +233,6 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     const yaws: number[] = [];
     if (isAveA(seed, i, j)) yaws.push(Math.PI / 4);
     if (isAveB(seed, i, j)) yaws.push(-Math.PI / 4);
-    const nearAve = (x: number, z: number, margin: number) => {
-      const a = isAveA(seed, i, j) && Math.abs(x - cx + (z - cz)) / 1.4142 < STREET / 2 + margin;
-      const b = isAveB(seed, i, j) && Math.abs(x - cx - (z - cz)) / 1.4142 < STREET / 2 + margin;
-      return a || b;
-    };
     for (const yaw of yaws) {
       const sg = patch(cx, cz, STREET, CELL * 1.4142 + 1, yaw, 2, segs + 4, 0.2);
       trash.push(sg);
@@ -242,15 +240,8 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       m.receiveShadow = true;
       group.add(m);
     }
-    let tries = 0;
-    const want = 8 + Math.floor(rnd() * 6);
-    while (trees.length < want && tries < 80) {
-      tries++;
-      const tx = cx + (rnd() * 2 - 1) * (inner / 2 - 2.4);
-      const tz = cz + (rnd() * 2 - 1) * (inner / 2 - 2.4);
-      if (nearAve(tx, tz, 4.2) || onRoadway(tx, tz, 3.6)) continue;
-      trees.push({ x: tx, z: tz, s: 0.7 + rnd() * 0.45, kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)] });
-    }
+    // Keep avenue blocks open. Even trees outside the diagonal strip cast a
+    // canopy over one of its lanes and read as if they grew through asphalt.
   } else if (type === 'parking' || type === 'mall') {
     const half = inner / 2;
     flat(geos.inner, mats.lotFloor, cx, hc - 0.16, cz, 0, true);
@@ -434,17 +425,12 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     const quat = new THREE.Quaternion();
     const scl = new THREE.Vector3();
 
-    if (type === 'park' || type === 'plaza' || type === 'avenue') {
-      const extra = type === 'park' ? 16 : type === 'plaza' ? 12 : 6;
+    if (type === 'park' || type === 'plaza') {
+      const extra = type === 'park' ? 16 : 12;
       for (let k = 0; k < extra; k++) {
         const px = cx + (rnd() * 2 - 1) * (inner / 2 - 2.2);
         const pz = cz + (rnd() * 2 - 1) * (inner / 2 - 2.2);
         if (onRoadway(px, pz, 2.4)) continue;
-        if (type === 'avenue') {
-          const a = isAveA(seed, i, j) && Math.abs(px - cx + (pz - cz)) / 1.4142 < STREET / 2 + 3.2;
-          const b = isAveB(seed, i, j) && Math.abs(px - cx - (pz - cz)) / 1.4142 < STREET / 2 + 3.2;
-          if (a || b) continue;
-        }
         plants.push({
           x: px,
           z: pz,
@@ -469,6 +455,12 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
           kind: GROUND_KINDS[Math.floor(rnd() * 3)]
         });
       }
+    }
+
+    // Validate the full crown, not only the trunk. This final guard also covers
+    // trees added by plazas and building edges.
+    for (let k = trees.length - 1; k >= 0; k--) {
+      if (onRoadway(trees[k].x, trees[k].z, 5 * trees[k].s)) trees.splice(k, 1);
     }
 
     const nature = cityNature();

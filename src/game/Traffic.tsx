@@ -19,10 +19,6 @@ const RIGHT_OF = [3, 0, 1, 2];
 const LANE = 3.5;
 /** Bumper to bumper distance a car will not close in on. */
 const MIN_GAP = 4.6;
-/** Still on screen; do not recycle if the car is ahead of the player. */
-const KEEP = 210;
-/** Hard recycle even if the car is still ahead. */
-const RECYCLE = 360;
 /** Comfortable deceleration, which sets how early a car starts slowing. */
 const BRAKE = 7;
 /** Where a car waits on red, measured from the middle of the junction. */
@@ -127,8 +123,12 @@ function aheadOfPlayer(x: number, z: number) {
 
 function shouldRecycle(x: number, z: number) {
   const d = Math.hypot(x - playerPos.x, z - playerPos.z);
-  if (d > RECYCLE) return true;
-  if (d > KEEP && !aheadOfPlayer(x, z)) return true;
+  const q = qualityOf(useGame.getState().quality);
+  const fogEdge = (q.loadRadius + 0.8) * CELL;
+  // Ahead/side traffic survives until it is behind the fog. Cars behind the
+  // camera can be recycled sooner without producing a visible pop.
+  if (d > fogEdge + 35) return true;
+  if (d > Math.max(270, fogEdge * 0.82) && !aheadOfPlayer(x, z)) return true;
   return false;
 }
 
@@ -411,9 +411,13 @@ function TrafficCar({ seed, kind, hue }: { seed: number; kind: VehicleKind; hue:
 
     a.speed += (want - a.speed) * Math.min(1, dt * (want < a.speed ? 7 : 2.2));
     a.speed = Math.max(0, a.speed);
-    // Never reverse: that was the "forward and back" twitch. A real overlap
-    // respawns the car instead of shunting it down the lane.
-    if (room < -2) { respawn(); return; }
+    // Never teleport an overlap away: that pop was visible at junctions.
+    // Holding still lets the leading car open the gap naturally.
+    if (room < -2) {
+      a.speed = 0;
+      place();
+      return;
+    }
     const move = Math.min(a.speed * dt, Math.max(0, room));
     if (move < a.speed * dt) a.speed = Math.min(a.speed, Math.max(0, roomSpeed));
     a.along += sgn * move;

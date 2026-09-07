@@ -55,6 +55,19 @@ function tileTexture(plain: boolean) {
   const c = canvas(px);
   const g = noiseFill(c, '#41464f', 7);
   const a = (STREET / 2) * s, b = (CELL - STREET / 2) * s;
+  // Cool, low-contrast damp patches break the uniformly dry asphalt. Their
+  // stronger specular response comes from the matching roughness map below.
+  const wet = mulberry32(8301);
+  for (let k = 0; k < 34; k++) {
+    const x = wet() * px;
+    const y = wet() * px;
+    const r = (18 + wet() * 68) * s;
+    const grd = g.createRadialGradient(x, y, 0, x, y, r);
+    grd.addColorStop(0, `rgba(25,35,45,${0.04 + wet() * 0.07})`);
+    grd.addColorStop(1, 'rgba(25,35,45,0)');
+    g.fillStyle = grd;
+    g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
   if (!plain) {
     g.fillStyle = '#8f8a82'; g.fillRect(a - 0.9 * s, a - 0.9 * s, b - a + 1.8 * s, b - a + 1.8 * s);
     g.fillStyle = '#b9b6ae'; g.fillRect(a, a, b - a, b - a);
@@ -85,6 +98,56 @@ function tileTexture(plain: boolean) {
     }
   }
   return finish(c);
+}
+
+/** Greyscale roughness: damp asphalt is glossy, while sidewalks stay matte. */
+function roadRoughnessTexture(plain: boolean) {
+  const px = 512, s = px / CELL;
+  const c = canvas(px);
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#5d5d5d';
+  g.fillRect(0, 0, px, px);
+  const rnd = mulberry32(9147);
+  for (let k = 0; k < 46; k++) {
+    const x = rnd() * px;
+    const y = rnd() * px;
+    const rx = 8 + rnd() * 42;
+    const ry = 20 + rnd() * 80;
+    const grd = g.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
+    const v = 30 + Math.floor(rnd() * 35);
+    grd.addColorStop(0, `rgb(${v},${v},${v})`);
+    grd.addColorStop(1, 'rgba(105,105,105,0)');
+    g.fillStyle = grd;
+    g.fillRect(x - rx, y - ry, rx * 2, ry * 2);
+  }
+  if (!plain) {
+    const a = (STREET / 2) * s, b = (CELL - STREET / 2) * s;
+    g.fillStyle = '#d8d8d8';
+    g.fillRect(a, a, b - a, b - a);
+  }
+  const t = finish(c, false, 4);
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
+
+/** Tiny asphalt grain catches long highlights without looking mirror-polished. */
+function asphaltNormalTexture() {
+  const px = 256;
+  const c = canvas(px);
+  const g = c.getContext('2d')!;
+  const image = g.createImageData(px, px);
+  const rnd = mulberry32(7712);
+  for (let k = 0; k < image.data.length; k += 4) {
+    image.data[k] = 122 + Math.floor(rnd() * 12);
+    image.data[k + 1] = 122 + Math.floor(rnd() * 12);
+    image.data[k + 2] = 250;
+    image.data[k + 3] = 255;
+  }
+  g.putImageData(image, 0, 0);
+  const t = finish(c, true, 4);
+  t.colorSpace = THREE.NoColorSpace;
+  t.repeat.set(7, 7);
+  return t;
 }
 
 function stripTexture() {
@@ -174,11 +237,36 @@ export function createAssets() {
 
   const win = windowTextures();
   const env = envTexture();
+  const roadRoughness = roadRoughnessTexture(false);
+  const asphaltNormal = asphaltNormalTexture();
 
   const mats = {
-    tile: new THREE.MeshLambertMaterial({ map: tileTexture(false) }),
-    tilePlain: new THREE.MeshLambertMaterial({ map: tileTexture(true) }),
-    strip: new THREE.MeshLambertMaterial({ map: stripTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+    tile: new THREE.MeshPhysicalMaterial({
+      map: tileTexture(false),
+      roughness: 0.92,
+      roughnessMap: roadRoughness,
+      normalMap: asphaltNormal,
+      normalScale: new THREE.Vector2(0.13, 0.13),
+      metalness: 0.06,
+      clearcoat: 0.32,
+      clearcoatRoughness: 0.38,
+      envMap: env,
+      envMapIntensity: 0.85
+    }),
+    strip: new THREE.MeshPhysicalMaterial({
+      map: stripTexture(),
+      roughness: 0.3,
+      normalMap: asphaltNormal,
+      normalScale: new THREE.Vector2(0.13, 0.13),
+      metalness: 0.08,
+      clearcoat: 0.4,
+      clearcoatRoughness: 0.32,
+      envMap: env,
+      envMapIntensity: 0.95,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2
+    }),
     lotFloor: new THREE.MeshLambertMaterial({ map: lotTexture() }),
     sidewalk: new THREE.MeshLambertMaterial({ color: 0xc4c1b8 }),
     curb: new THREE.MeshLambertMaterial({ color: 0x8b877f }),
