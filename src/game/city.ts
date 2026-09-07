@@ -3,6 +3,7 @@ import { BLOCK, CELL, PALETTE, SIDEWALK, STREET } from './config';
 import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
 import { cityProps, LAMP_HEAD, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
+import { cityNature, GROUND_KINDS, NatureKind, TREE_KINDS } from './nature';
 import { cloneVehicle, pickHue, VehicleKind } from './vehicles';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -131,7 +132,8 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
   const type = blockTypeAt(seed, i, j);
   const segs = detail ? 10 : far ? 3 : 5;
 
-  const trees: { x: number; z: number; s: number }[] = [];
+  const trees: { x: number; z: number; s: number; kind: NatureKind }[] = [];
+  const plants: { x: number; z: number; s: number; yaw: number; kind: NatureKind }[] = [];
   const lamps: { x: number; z: number; yaw: number }[] = [];
   const lotCars: { x: number; z: number; half: number; n: number; yaw: number }[] = [];
   const farBoxes: any[] = [];
@@ -237,7 +239,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       tries++;
       const tx = cx + (rnd() * 2 - 1) * (BLOCK / 2 - 2);
       const tz = cz + (rnd() * 2 - 1) * (BLOCK / 2 - 2);
-      if (!nearAve(tx, tz, 3.2)) trees.push({ x: tx, z: tz, s: 0.8 + rnd() * 0.6 });
+      if (!nearAve(tx, tz, 3.2)) trees.push({ x: tx, z: tz, s: 0.8 + rnd() * 0.6, kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)] });
     }
   } else if (type === 'parking' || type === 'mall') {
     const half = inner / 2;
@@ -304,7 +306,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         boxes.push({ pos: [cx - rim + thick, hc + 0.85, cz], half: [thick, rh, rim - thick] });
         boxes.push({ pos: [cx + rim - thick, hc + 0.85, cz], half: [thick, rh, rim - thick] });
         for (let k = 0; k < 4; k++) {
-          trees.push({ x: cx + (k % 2 ? 1 : -1) * (inner / 2 - 2), z: cz + (k < 2 ? 1 : -1) * (inner / 2 - 2), s: 1.1 });
+          trees.push({ x: cx + (k % 2 ? 1 : -1) * (inner / 2 - 2), z: cz + (k < 2 ? 1 : -1) * (inner / 2 - 2), s: 1.1, kind: TREE_KINDS[k % TREE_KINDS.length] });
         }
       } else {
         const count = 7 + Math.floor(rnd() * 7);
@@ -312,7 +314,8 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
           trees.push({
             x: cx + (rnd() * 2 - 1) * (inner / 2 - 2.5),
             z: cz + (rnd() * 2 - 1) * (inner / 2 - 2.5),
-            s: 0.8 + rnd() * 0.9
+            s: 0.8 + rnd() * 0.9,
+            kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)]
           });
         }
       }
@@ -372,7 +375,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       if (rnd() < 0.6) {
         const side = rnd() < 0.5 ? 1 : -1;
         for (let k = -1; k <= 1; k += 2) {
-          trees.push({ x: cx + k * BLOCK * 0.25, z: cz + side * (BLOCK / 2 - 1.6), s: 0.7 + rnd() * 0.3 });
+          trees.push({ x: cx + k * BLOCK * 0.25, z: cz + side * (BLOCK / 2 - 1.6), s: 0.7 + rnd() * 0.3, kind: 'small' });
         }
       }
       if (far && farBoxes.length) {
@@ -390,21 +393,88 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     const quat = new THREE.Quaternion();
     const scl = new THREE.Vector3();
 
+    if (type !== 'parking' && type !== 'mall') {
+      const extra = type === 'park' ? 16 : type === 'plaza' ? 12 : type === 'avenue' ? 8 : 6;
+      for (let k = 0; k < extra; k++) {
+        const px = cx + (rnd() * 2 - 1) * (inner / 2 - 1.6);
+        const pz = cz + (rnd() * 2 - 1) * (inner / 2 - 1.6);
+        if (type === 'avenue') {
+          const a = isAveA(seed, i, j) && Math.abs(px - cx + (pz - cz)) / 1.4142 < STREET / 2 + 2.4;
+          const b = isAveB(seed, i, j) && Math.abs(px - cx - (pz - cz)) / 1.4142 < STREET / 2 + 2.4;
+          if (a || b) continue;
+        }
+        plants.push({
+          x: px,
+          z: pz,
+          s: 0.75 + rnd() * 0.5,
+          yaw: rnd() * Math.PI * 2,
+          kind: GROUND_KINDS[Math.floor(rnd() * GROUND_KINDS.length)]
+        });
+      }
+    }
+
+    const nature = cityNature();
+
     if (trees.length) {
-      const trunkI = new THREE.InstancedMesh(geos.trunk, mats.trunk, trees.length);
-      const leafI = new THREE.InstancedMesh(geos.leaf, mats.leaf, trees.length);
-      const leafI2 = new THREE.InstancedMesh(geos.leaf, mats.leaf2, trees.length);
-      trees.forEach((t, k) => {
-        const ty = heightAt(t.x, t.z);
-        scl.set(t.s, t.s, t.s);
-        pos.set(t.x, ty + 1.2 * t.s + 0.3, t.z); m4.compose(pos, quat, scl); trunkI.setMatrixAt(k, m4);
-        pos.set(t.x, ty + 3 * t.s + 0.3, t.z); m4.compose(pos, quat, scl); leafI.setMatrixAt(k, m4);
-        scl.set(t.s * 0.7, t.s * 0.7, t.s * 0.7);
-        pos.set(t.x + 0.6 * t.s, ty + 3.9 * t.s + 0.3, t.z - 0.3 * t.s); m4.compose(pos, quat, scl); leafI2.setMatrixAt(k, m4);
-        boxes.push({ pos: [t.x, ty + 1.4 * t.s, t.z], half: [0.45 * t.s, 1.5 * t.s, 0.45 * t.s] });
+      if (nature) {
+        const byKind = new Map<NatureKind, typeof trees>();
+        for (const t of trees) {
+          const list = byKind.get(t.kind) ?? [];
+          list.push(t);
+          byKind.set(t.kind, list);
+        }
+        byKind.forEach((list, kind) => {
+          const mesh = nature[kind];
+          const inst = new THREE.InstancedMesh(mesh.geometry, mesh.material, list.length);
+          list.forEach((t, k) => {
+            const ty = heightAt(t.x, t.z);
+            quat.setFromAxisAngle(UP, ((hash3(seed, t.x | 0, t.z | 0) >>> 0) % 360) * 0.01745);
+            scl.set(t.s, t.s, t.s);
+            pos.set(t.x, ty, t.z);
+            m4.compose(pos, quat, scl);
+            inst.setMatrixAt(k, m4);
+            boxes.push({ pos: [t.x, ty + 1.6 * t.s, t.z], half: [0.55 * t.s, 1.6 * t.s, 0.55 * t.s] });
+          });
+          inst.castShadow = true;
+          group.add(inst);
+        });
+      } else {
+        const trunkI = new THREE.InstancedMesh(geos.trunk, mats.trunk, trees.length);
+        const leafI = new THREE.InstancedMesh(geos.leaf, mats.leaf, trees.length);
+        const leafI2 = new THREE.InstancedMesh(geos.leaf, mats.leaf2, trees.length);
+        trees.forEach((t, k) => {
+          const ty = heightAt(t.x, t.z);
+          scl.set(t.s, t.s, t.s);
+          pos.set(t.x, ty + 1.2 * t.s + 0.3, t.z); m4.compose(pos, quat, scl); trunkI.setMatrixAt(k, m4);
+          pos.set(t.x, ty + 3 * t.s + 0.3, t.z); m4.compose(pos, quat, scl); leafI.setMatrixAt(k, m4);
+          scl.set(t.s * 0.7, t.s * 0.7, t.s * 0.7);
+          pos.set(t.x + 0.6 * t.s, ty + 3.9 * t.s + 0.3, t.z - 0.3 * t.s); m4.compose(pos, quat, scl); leafI2.setMatrixAt(k, m4);
+          boxes.push({ pos: [t.x, ty + 1.4 * t.s, t.z], half: [0.45 * t.s, 1.5 * t.s, 0.45 * t.s] });
+        });
+        trunkI.castShadow = leafI.castShadow = true;
+        group.add(trunkI, leafI, leafI2);
+      }
+    }
+
+    if (plants.length && nature) {
+      const byKind = new Map<NatureKind, typeof plants>();
+      for (const p of plants) {
+        const list = byKind.get(p.kind) ?? [];
+        list.push(p);
+        byKind.set(p.kind, list);
+      }
+      byKind.forEach((list, kind) => {
+        const mesh = nature[kind];
+        const inst = new THREE.InstancedMesh(mesh.geometry, mesh.material, list.length);
+        list.forEach((p, k) => {
+          quat.setFromAxisAngle(UP, p.yaw);
+          scl.set(p.s, p.s, p.s);
+          pos.set(p.x, heightAt(p.x, p.z), p.z);
+          m4.compose(pos, quat, scl);
+          inst.setMatrixAt(k, m4);
+        });
+        group.add(inst);
       });
-      trunkI.castShadow = leafI.castShadow = true;
-      group.add(trunkI, leafI, leafI2);
     }
 
     const props = cityProps();
@@ -455,8 +525,10 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         const sgn2 = k < 2 ? 1 : -1;
         const nodeX = ox + (sgn > 0 ? CELL : 0);
         const nodeZ = oz + (sgn2 > 0 ? CELL : 0);
-        const tlx = cx + sgn * (BLOCK / 2 + 1.2);
-        const tlz = cz + sgn2 * (BLOCK / 2 + 1.2);
+        // Sit on the sidewalk, 0.9 m in from the kerb, so a turning jeep
+        // does not clip the pole in the roadway.
+        const tlx = cx + sgn * (BLOCK / 2 - 0.9);
+        const tlz = cz + sgn2 * (BLOCK / 2 - 0.9);
         const y = heightAt(tlx, tlz);
         // face away from the block, towards the traffic this signal governs
         const yaw = k < 2 ? propYaw(sgn, 0) : propYaw(0, sgn2);
@@ -486,6 +558,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
           ];
         }
         signals.push({ nx: nodeX, nz: nodeZ, axisX: k < 2, dots });
+        boxes.push({ pos: [tlx, y + 2.4, tlz], half: [0.22, 2.4, 0.22] });
       }
     }
 

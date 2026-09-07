@@ -14,9 +14,10 @@ type GameState = {
   score: number;
   distance: number;
   clock: number;
+  night: number;
   setSeed: (s: number) => void;
   setQuality: (q: QualityName) => void;
-  setHud: (v: Partial<Pick<GameState, 'speed' | 'score' | 'distance' | 'clock'>>) => void;
+  setHud: (v: Partial<Pick<GameState, 'speed' | 'score' | 'distance' | 'clock' | 'night'>>) => void;
 };
 
 export const useGame = create<GameState>((set) => ({
@@ -26,6 +27,7 @@ export const useGame = create<GameState>((set) => ({
   score: 0,
   distance: 0,
   clock: 7.2,
+  night: 0,
   setSeed: (seed) => set({ seed, score: 0 }),
   setQuality: (quality) => set({ quality }),
   setHud: (v) => set(v)

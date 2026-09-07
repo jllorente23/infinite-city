@@ -42,7 +42,7 @@ export function Car() {
   const { camera } = useThree();
   const setHud = useGame((s) => s.setHud);
 
-  const { chassis, spec, wheels, hull } = useMemo(() => {
+  const { chassis, spec, wheels, hull, spots, fill } = useMemo(() => {
     const g = makeChassis('jeep', 0x6f7f4a);
     const s = g.spec!;
     const w = [0, 1, 2, 3].map(() => {
@@ -51,12 +51,24 @@ export function Car() {
       return mesh;
     });
     g.traverse((o: any) => { if (o.isMesh) o.castShadow = true; });
+    const mkSpot = (x: number) => {
+      const light = new THREE.SpotLight(0xfff1c4, 0, 46, 0.46, 0.42, 1.15);
+      light.position.set(x, 0.82, -2.05);
+      light.target.position.set(x * 0.2, -0.15, -18);
+      g.add(light);
+      g.add(light.target);
+      return light;
+    };
+    const spots = [mkSpot(-0.62), mkSpot(0.62)];
+    const fill = new THREE.PointLight(0xffe4b0, 0, 13, 1.7);
+    fill.position.set(0, 0.72, -2.15);
+    g.add(fill);
     const halfY = (HULL_TOP - s.bottom) / 2;
     const h = {
       half: [s.W / 2, halfY, (s.L * 0.92) / 2] as [number, number, number],
       centre: (HULL_TOP + s.bottom) / 2
     };
-    return { chassis: g, spec: s, wheels: w, hull: h };
+    return { chassis: g, spec: s, wheels: w, hull: h, spots, fill };
   }, []);
 
   /** Mass sits low and resists roll, instead of being spread through the hull box. */
@@ -203,6 +215,12 @@ export function Car() {
     camPos.current.lerp(goal, 1 - Math.pow(0.0015, delta));
     camera.position.copy(camPos.current);
     camera.lookAt(t.x + fwd.x * 5, t.y + 1.2, t.z + fwd.z * 5);
+
+    const night = useGame.getState().night;
+    const beams = night > 0.28 ? night : 0;
+    spots[0].intensity = beams * 85;
+    spots[1].intensity = beams * 85;
+    fill.intensity = beams * 14;
 
     setHud({ speed: Math.round(Math.abs(speed) * 3.6) });
   });

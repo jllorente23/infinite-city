@@ -23,6 +23,22 @@ Las tres luces del semáforo siguen siendo mallas propias, colocadas sobre las
 lentes del modelo (`SIGNAL_LENS_Y`), porque hay que encenderlas y apagarlas por
 separado según `signalState`.
 
+## Vegetación (ya integrada)
+
+En `nature/` hay un recorte del Kenney *Nature Kit* (CC0, ver
+`nature/License.txt`):
+
+| Archivo | Uso |
+| --- | --- |
+| `tree_oak.glb`, `tree_tall.glb`, `tree_default.glb`, `tree_pineDefaultA.glb`, `tree_small.glb` | árboles de parque, avenida y acera |
+| `plant_bushDetailed.glb`, `plant_bushSmall.glb` | arbustos |
+| `grass_large.glb` | matas de hierba |
+| `flower_yellowA.glb`, `flower_redA.glb`, `flower_purpleA.glb` | flores |
+
+`src/game/nature.ts` los carga, fusiona las primitivas (tronco + copa) en una
+sola geometría con color de vértice y los deja en caché para `InstancedMesh`
+por manzana. `City` se suspende hasta que llegan.
+
 ## Vehículos
 
 Los vehículos actuales se generan por código (`src/game/vehicles.ts`). Para subir

@@ -8,6 +8,7 @@ import { ChunkData, ensureFacades, generateChunk } from './city';
 import { playerPos, qualityOf, useGame } from './store';
 import { setTerrainSeed } from './rng';
 import { useCityProps } from './props';
+import { useCityNature } from './nature';
 import { signalState } from './signals';
 
 type Slot = { key: string; i: number; j: number; lod: number };
@@ -31,9 +32,10 @@ export function City() {
   const quality = useGame((s) => s.quality);
   const q = qualityOf(quality);
 
-  // Suspends until the lamp and signal models are in, so the first chunks that
-  // generate already have them and no block is left with placeholder props.
+  // Suspends until the lamp, signal and nature models are in, so the first
+  // chunks that generate already have them and no block is left with placeholders.
   useCityProps();
+  useCityNature();
 
   const [cells, setCells] = useState<Slot[]>([]);
   const center = useRef({ i: NaN, j: NaN });

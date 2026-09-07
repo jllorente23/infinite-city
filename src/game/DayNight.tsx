@@ -4,24 +4,26 @@ import { Suspense, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Cloud, Clouds } from '@react-three/drei';
-import { DAY_SECONDS, SKY_RADIUS } from './config';
+import { BLOCK, CELL, DAY_SECONDS, SKY_RADIUS } from './config';
 import { cloudPuffUrl, createAssets } from './textures';
 import { vehicleMats } from './vehicles';
 import { playerPos, qualityOf, useGame } from './store';
+import { heightAt } from './rng';
+import { LAMP_HEAD } from './props';
 
 const DAY_TOP = new THREE.Color(0x5f8fd6);
 const DAY_HOR = new THREE.Color(0xc6d6e8);
 const SET_TOP = new THREE.Color(0x4d4278);
 const SET_HOR = new THREE.Color(0xf0a266);
-const NIGHT_TOP = new THREE.Color(0x04060e);
-const NIGHT_HOR = new THREE.Color(0x131b30);
+const NIGHT_TOP = new THREE.Color(0x0d1c3a);
+const NIGHT_HOR = new THREE.Color(0x1e3d68);
 const SUN_DAY = new THREE.Color(0xfff0d6);
 const SUN_LOW = new THREE.Color(0xffb070);
-const MOON = new THREE.Color(0x8fa8dd);
+const MOON = new THREE.Color(0xb7c8ee);
 const HEMI_DAY = new THREE.Color(0xe8f0fa);
-const HEMI_NIGHT = new THREE.Color(0x2a3550);
+const HEMI_NIGHT = new THREE.Color(0x6b8fc4);
 const GROUND_DAY = new THREE.Color(0x5e6670);
-const GROUND_NIGHT = new THREE.Color(0x141a24);
+const GROUND_NIGHT = new THREE.Color(0x1a2a3c);
 
 const CLOUD_DAY = new THREE.Color(0xffffff);
 const CLOUD_SET = new THREE.Color(0xffc79a);
@@ -153,16 +155,17 @@ export function DayNight() {
       } else {
         sun.current.position.set(playerPos.x - dir.x * 110, -dir.y * 110, playerPos.z - dir.z * 110);
         sun.current.color.copy(MOON);
-        sun.current.intensity = 0.3 * night;
+        sun.current.intensity = 0.72 * night;
       }
       sun.current.target.position.set(playerPos.x, 0, playerPos.z);
       sun.current.target.updateMatrixWorld();
     }
     if (hemi.current) {
-      hemi.current.intensity = 0.3 + 0.7 * day;
+      hemi.current.intensity = 0.48 + 0.52 * day;
       hemi.current.color.copy(HEMI_NIGHT).lerp(HEMI_DAY, day);
       hemi.current.groundColor.copy(GROUND_NIGHT).lerp(GROUND_DAY, day);
     }
+    state.gl.toneMappingExposure = 1.08 + night * 0.22;
 
     (stars.material as THREE.PointsMaterial).opacity = Math.pow(night, 2) * 0.9;
     sky.mesh.position.copy(state.camera.position);
@@ -193,8 +196,8 @@ export function DayNight() {
 
     const vm = vehicleMats();
     const lightsOn = day < 0.55;
-    vm.head.emissiveIntensity = lightsOn ? 1.1 : 0;
-    vm.brake.emissiveIntensity = lightsOn ? 0.6 : 0.15;
+    vm.head.emissiveIntensity = lightsOn ? 2.4 : 0;
+    vm.brake.emissiveIntensity = lightsOn ? 0.85 : 0.15;
     const envI = 0.25 + day;
     for (const key of Object.keys(vm.body)) vm.body[Number(key)].envMapIntensity = envI;
     vm.glass.envMapIntensity = envI;
@@ -204,7 +207,7 @@ export function DayNight() {
     vm.barR.emissiveIntensity = flash ? 1.4 : 0.15;
     vm.barB.emissiveIntensity = flash ? 0.15 : 1.4;
 
-    setHud({ clock: t * 24 });
+    setHud({ clock: t * 24, night });
   });
 
   return (
@@ -230,6 +233,58 @@ export function DayNight() {
         shadow-camera-bottom={-70}
         shadow-bias={-0.0008}
       />
+      <StreetGlow count={q.shadows ? 8 : 5} />
     </>
   );
+}
+
+/** A handful of warm point lights that snap to the nearest street-lamp heads. */
+function StreetGlow({ count }: { count: number }) {
+  const group = useRef<THREE.Group>(null);
+  const lamps = useMemo(
+    () =>
+      Array.from({ length: count }, () => {
+        const l = new THREE.PointLight(0xffd89a, 0, 26, 1.6);
+        return l;
+      }),
+    [count]
+  );
+
+  useFrame(() => {
+    const night = useGame.getState().night;
+    const heads = nearestLampHeads(playerPos.x, playerPos.z, count);
+    lamps.forEach((l, i) => {
+      const h = heads[i];
+      if (!h) { l.intensity = 0; return; }
+      l.position.set(h.x, h.y, h.z);
+      l.intensity = night * 22;
+    });
+  });
+
+  return (
+    <group ref={group}>
+      {lamps.map((l, i) => (
+        <primitive key={i} object={l} />
+      ))}
+    </group>
+  );
+}
+
+function nearestLampHeads(x: number, z: number, n: number) {
+  const ci = Math.floor(x / CELL);
+  const cj = Math.floor(z / CELL);
+  const out: { x: number; y: number; z: number; d: number }[] = [];
+  for (let i = ci - 2; i <= ci + 2; i++) {
+    for (let j = cj - 2; j <= cj + 2; j++) {
+      const cx = i * CELL + CELL / 2;
+      const cz = j * CELL + CELL / 2;
+      for (const [ex, ez] of [[-1, -1], [-1, 1], [1, -1], [1, 1]] as const) {
+        const lx = cx + ex * (BLOCK / 2 - 1.2);
+        const lz = cz + ez * (BLOCK / 2 - 1.2);
+        out.push({ x: lx, y: heightAt(lx, lz) + LAMP_HEAD.y, z: lz, d: Math.hypot(lx - x, lz - z) });
+      }
+    }
+  }
+  out.sort((a, b) => a.d - b.d);
+  return out.slice(0, n);
 }
