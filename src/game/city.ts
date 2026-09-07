@@ -58,6 +58,36 @@ export function blockTypeAt(seed: number, i: number, j: number): BlockType {
   return 'low';
 }
 
+/** Join several terrain patches into one indexed mesh for a single trimesh. */
+function mergePatches(parts: THREE.BufferGeometry[]) {
+  let vCount = 0;
+  let iCount = 0;
+  for (const g of parts) {
+    vCount += g.attributes.position.count;
+    iCount += g.index ? g.index.count : g.attributes.position.count;
+  }
+  const pos = new Float32Array(vCount * 3);
+  const nor = new Float32Array(vCount * 3);
+  const index = new Uint32Array(iCount);
+  let vOff = 0;
+  let iOff = 0;
+  for (const g of parts) {
+    const n = g.attributes.position.count;
+    pos.set(g.attributes.position.array as Float32Array, vOff * 3);
+    nor.set(g.attributes.normal.array as Float32Array, vOff * 3);
+    const src = g.index ? (g.index.array as ArrayLike<number>) : null;
+    const count = src ? src.length : n;
+    for (let k = 0; k < count; k++) index[iOff + k] = (src ? src[k] : k) + vOff;
+    vOff += n;
+    iOff += count;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setIndex(new THREE.BufferAttribute(index, 1));
+  return out;
+}
+
 /** A terrain-following patch of ground. Also reused as the physics trimesh. */
 function patch(cx: number, cz: number, w: number, l: number, yaw: number, segW: number, segL: number, yOff: number, uvBox?: number[]) {
   const g = new THREE.PlaneGeometry(w, l, segW, segL);
@@ -131,7 +161,10 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       m.receiveShadow = true;
       group.add(m);
     });
-    ground = strips[0];
+    // All four streets must be in the trimesh. Using only the first strip left
+    // the other three as decoration, and the car fell through them into the basin.
+    ground = mergePatches(strips);
+    trash.push(ground);
     const qz1 = oz + STREET / 2, qz2 = oz + CELL - STREET / 2;
     const qx1 = ox + STREET / 2, qx2 = ox + CELL - STREET / 2;
     flat(geos.quayX, mats.deck, cx, heightAt(cx, qz1) - 2.1, qz1);
@@ -146,8 +179,18 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     flat(geos.railX, mats.rail, cx, heightAt(cx, qz2) + 0.6, qz2);
     flat(geos.railZ, mats.rail, qx1, heightAt(qx1, cz) + 0.6, cz);
     flat(geos.railZ, mats.rail, qx2, heightAt(qx2, cz) + 0.6, cz);
-    // the water is a wall as far as physics is concerned
-    boxes.push({ pos: [cx, hc - 1, cz], half: [BLOCK / 2, 2.4, BLOCK / 2] });
+
+    // Quay walls sit on the water side of the kerb so a car hugging the rail
+    // never starts its wheel rays inside a volume. The old basin cube stuck
+    // 1.4 m above the street and killed contact as soon as the hull clipped it.
+    const wall = 0.4;
+    const wallY = 0.9;
+    boxes.push({ pos: [cx, hc + 0.1, cz - BLOCK / 2 + wall], half: [BLOCK / 2, wallY, wall] });
+    boxes.push({ pos: [cx, hc + 0.1, cz + BLOCK / 2 - wall], half: [BLOCK / 2, wallY, wall] });
+    boxes.push({ pos: [cx - BLOCK / 2 + wall, hc + 0.1, cz], half: [wall, wallY, BLOCK / 2] });
+    boxes.push({ pos: [cx + BLOCK / 2 - wall, hc + 0.1, cz], half: [wall, wallY, BLOCK / 2] });
+    // If something does go over, land on the water instead of the void.
+    boxes.push({ pos: [cx, hc - 2.2, cz], half: [BLOCK / 2 - 0.9, 0.7, BLOCK / 2 - 0.9] });
   } else {
     const tg = patch(cx, cz, CELL, CELL, 0, segs, segs, 0);
     trash.push(tg);
@@ -252,7 +295,14 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         water.position.set(cx, hc + 1.25, cz); group.add(water);
         const jet = new THREE.Mesh(geos.jet, mats.stone);
         jet.position.set(cx, hc + 2.5, cz); jet.castShadow = true; group.add(jet);
-        boxes.push({ pos: [cx, hc + 1.2, cz], half: [5.4, 1.2, 5.4] });
+        // A filled cube, even a short one, swallows wheel rays once the car
+        // is on the basin. Four rim walls leave the water hollow so the
+        // sidewalk underneath keeps contact.
+        const rim = 5.4, thick = 0.45, rh = 0.55;
+        boxes.push({ pos: [cx, hc + 0.85, cz - rim + thick], half: [rim, rh, thick] });
+        boxes.push({ pos: [cx, hc + 0.85, cz + rim - thick], half: [rim, rh, thick] });
+        boxes.push({ pos: [cx - rim + thick, hc + 0.85, cz], half: [thick, rh, rim - thick] });
+        boxes.push({ pos: [cx + rim - thick, hc + 0.85, cz], half: [thick, rh, rim - thick] });
         for (let k = 0; k < 4; k++) {
           trees.push({ x: cx + (k % 2 ? 1 : -1) * (inner / 2 - 2), z: cz + (k < 2 ? 1 : -1) * (inner / 2 - 2), s: 1.1 });
         }

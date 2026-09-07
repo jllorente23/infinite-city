@@ -6,7 +6,9 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { CuboidCollider, RapierRigidBody, RigidBody, useBeforePhysicsStep, useRapier } from '@react-three/rapier';
 import { makeChassis, makeWheel } from './vehicles';
 import { controls, playerPos, useGame } from './store';
-import { heightAt } from './rng';
+import { CELL } from './config';
+import { heightAt, isInsideBlock } from './rng';
+import { blockTypeAt } from './city';
 
 const MASS = 1150;
 const ENGINE = 3400;
@@ -176,12 +178,16 @@ export function Car() {
 
     // Safety net. Without this a hard landing can punch the hull through the road
     // surface, and once the wheel rays start underground nothing can recover.
+    // Over a canal basin the "ground" height is the missing street, so snapping
+    // there would bounce the car above the water forever.
     up.set(0, 1, 0).applyQuaternion(chassis.quaternion);
     flipped.current = up.y < 0.25 ? flipped.current + delta : 0;
     const gy = heightAt(t.x, t.z);
-    if (t.y < gy - 1.2 || flipped.current > 1.5) {
+    const inBasin = isInsideBlock(t.x, t.z) &&
+      blockTypeAt(useGame.getState().seed, Math.floor(t.x / CELL), Math.floor(t.z / CELL)) === 'canal';
+    if (!inBasin && (t.y < gy - 0.4 || flipped.current > 1.5)) {
       const yaw = Math.atan2(-fwd.x, -fwd.z);
-      rb.setTranslation({ x: t.x, y: gy + 0.8, z: t.z }, true);
+      rb.setTranslation({ x: t.x, y: gy + 0.6, z: t.z }, true);
       rb.setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), true);
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
       rb.setAngvel({ x: 0, y: 0, z: 0 }, true);
