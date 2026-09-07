@@ -22,6 +22,8 @@ const MAX_TRAVEL = 0.25;
 /** How far the springs settle under the car's own weight. Subtracted from the
  *  wheel anchors so a parked car has its wheels exactly inside the arches. */
 const STATIC_SAG = 0.1;
+/** Spawn at settled suspension height instead of dropping a metre onto it. */
+const START_CLEARANCE = 0.12;
 /** Top of the hull collider. The bottom comes from the model's ride height. */
 const HULL_TOP = 1.6;
 /** Centre of mass above the contact patch. Keep it low or hard braking flips the car. */
@@ -117,10 +119,10 @@ export function Car() {
       c.addWheel(p, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, REST_LEN, spec.wr);
     }
     for (let i = 0; i < 4; i++) {
-      c.setWheelSuspensionStiffness(i, 48);
+      c.setWheelSuspensionStiffness(i, 38);
       c.setWheelMaxSuspensionTravel(i, MAX_TRAVEL);
-      c.setWheelSuspensionCompression(i, 1.6);
-      c.setWheelSuspensionRelaxation(i, 2.2);
+      c.setWheelSuspensionCompression(i, 2.4);
+      c.setWheelSuspensionRelaxation(i, 3.2);
       c.setWheelFrictionSlip(i, 2.4);
       c.setWheelSideFrictionStiffness(i, i < 2 ? 1.0 : 0.75);
       c.setWheelMaxSuspensionForce(i, 60000);
@@ -162,7 +164,7 @@ export function Car() {
     const rolling = Math.abs(speed) > 0.3;
     const brake = controls.brake > 0
       ? (reversing ? 0 : BRAKE_FORCE)
-      : controls.throttle > 0 ? 0 : rolling ? 9 : 0;
+      : controls.throttle > 0 ? 0 : rolling ? 18 : 28;
     for (let i = 0; i < 4; i++) c.setWheelBrake(i, brake);
 
     c.updateVehicle(world.timestep);
@@ -199,9 +201,13 @@ export function Car() {
     const gy = heightAt(t.x, t.z);
     const inBasin = isInsideBlock(t.x, t.z) &&
       blockTypeAt(useGame.getState().seed, Math.floor(t.x / CELL), Math.floor(t.z / CELL)) === 'canal';
-    if (!inBasin && (t.y < gy - 0.4 || flipped.current > 1.5)) {
+    // Canal water is lower than the streets, but it must never disable recovery
+    // completely: if its catch collider is missing, recover instead of falling
+    // forever.
+    const fellThrough = t.y < gy - (inBasin ? 6 : 0.4);
+    if (fellThrough || flipped.current > 1.5) {
       const yaw = Math.atan2(-fwd.x, -fwd.z);
-      rb.setTranslation({ x: t.x, y: gy + 0.6, z: t.z }, true);
+      rb.setTranslation({ x: t.x, y: gy + START_CLEARANCE, z: t.z }, true);
       rb.setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), true);
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
       rb.setAngvel({ x: 0, y: 0, z: 0 }, true);
@@ -232,7 +238,7 @@ export function Car() {
       <RigidBody
         ref={body}
         colliders={false}
-        position={[0, heightAt(0, 0) + 1, 0]}
+        position={[0, heightAt(0, 0) + START_CLEARANCE, 0]}
         linearDamping={0.05}
         angularDamping={0.6}
         canSleep={false}

@@ -314,9 +314,6 @@ export function makeVehicle(kind: VehicleKind, hex: number, simple = true) {
 }
 
 const protoCache: Record<string, VehicleGroup> = {};
-export function resetVehicleProtos() {
-  for (const key of Object.keys(protoCache)) delete protoCache[key];
-}
 export function cloneVehicle(kind: VehicleKind, hex: number) {
   const key = `${kind}_${hex}`;
   if (!protoCache[key]) protoCache[key] = makeVehicle(kind, hex, true);

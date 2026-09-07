@@ -43,6 +43,9 @@ export function TouchControls() {
     window.addEventListener('mouseup', release);
     window.addEventListener('blur', release);
     return () => {
+      controls.steer = 0;
+      controls.throttle = 0;
+      controls.brake = 0;
       el.removeEventListener('touchstart', ts);
       el.removeEventListener('touchmove', tm);
       el.removeEventListener('touchend', te);

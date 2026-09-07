@@ -34,6 +34,12 @@ export function City() {
   const quality = useGame((s) => s.quality);
   const q = qualityOf(quality);
 
+  // Chunks are generated synchronously during render. The seed must therefore
+  // be active before the initial state creates them; doing this in an effect
+  // left the first terrain mesh on the previous phase while vehicle physics
+  // queried the new one.
+  setTerrainSeed(seed);
+
   // Suspends until the lamp, signal and nature models are in, so the first
   // chunks that generate already have them and no block is left with placeholders.
   useCityProps();
@@ -48,7 +54,6 @@ export function City() {
   const setBooting = useGame((s) => s.setBooting);
 
   useEffect(() => {
-    setTerrainSeed(seed);
     ensureFacades();
     const ci = Math.floor(playerPos.x / CELL);
     const cj = Math.floor(playerPos.z / CELL);

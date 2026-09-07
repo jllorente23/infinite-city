@@ -3,7 +3,6 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
-import { resetVehicleProtos } from './vehicles';
 
 type Spec = { url: string; L: number; ride: number; truckWheel?: boolean };
 
@@ -55,14 +54,17 @@ function lambertOf(src: THREE.Material) {
   });
 }
 
-/** Kenney bodies have no wheels and a 2³ helper cube. Scale the real meshes
- *  to the physics length, face -Z, and sit the underbody at `ride`. */
+/** Strip authored wheels, scale the body to the physics length, face -Z, and
+ *  sit the underbody at `ride`. Rapier supplies the moving wheels separately. */
 function bakeBody(scene: THREE.Object3D, length: number, ride: number) {
   const inner = new THREE.Group();
   scene.updateMatrixWorld(true);
   scene.traverse((o) => {
     const mesh = o as THREE.Mesh;
-    if (!mesh.isMesh || isHelperCube(mesh)) return;
+    // Every Kenney body GLB already includes four wheels (and some include a
+    // spare). They cannot stay attached to the body because Rapier positions
+    // and spins the four suspension wheels independently.
+    if (!mesh.isMesh || isHelperCube(mesh) || /wheel/i.test(mesh.name)) return;
     const clone = new THREE.Mesh(mesh.geometry, lambertOf(mesh.material as THREE.Material));
     mesh.matrixWorld.decompose(clone.position, clone.quaternion, clone.scale);
     clone.castShadow = true;
@@ -102,10 +104,10 @@ function bakeWheel(scene: THREE.Object3D) {
   const geometry = mesh.geometry.clone();
   geometry.computeBoundingBox();
   const box = geometry.boundingBox!;
-  const diam = Math.max(box.max.y - box.min.y, box.max.z - box.min.z, box.max.x - box.min.x);
+  // Kenney wheels already rotate around X: X is width and Y/Z are diameter.
+  const diam = Math.max(box.max.y - box.min.y, box.max.z - box.min.z);
   geometry.scale(1 / diam, 1 / diam, 1 / diam);
   geometry.center();
-  geometry.rotateZ(Math.PI / 2);
   return { geometry, material: lambertOf(mesh.material as THREE.Material) };
 }
 
@@ -146,7 +148,6 @@ export function useCityCars(): CarKit {
     const w = bakeWheel(wheel.scene);
     const wt = bakeWheel(wheelTruck.scene);
     cache = { body, wheel: w.geometry, wheelTruck: wt.geometry, wheelMat: w.material };
-    resetVehicleProtos();
     return cache;
   }, [sedan, suv, jeep, pickup, van, bus, taxi, police, ambulance, wheel, wheelTruck]);
 }
@@ -166,7 +167,11 @@ export function kitWheel(radius: number, width: number, truck = false) {
   if (!cars) return null;
   const geo = truck ? cars.wheelTruck : cars.wheel;
   const mesh = new THREE.Mesh(geo, cars.wheelMat);
-  mesh.scale.set(width, radius * 2, radius * 2);
+  // Normalized wheel geometry retains a width of 0.58–0.67. Compensate so the
+  // requested width is the actual width instead of scaling the tire too thin.
+  const box = geo.boundingBox;
+  const unitWidth = box ? box.max.x - box.min.x : 2 / 3;
+  mesh.scale.set(width / unitWidth, radius * 2, radius * 2);
   mesh.castShadow = true;
   return mesh;
 }
