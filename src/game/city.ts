@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { BLOCK, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, SIDEWALK, STREET } from './config';
+import { BLOCK, BRIDGE_DECK, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, SIDEWALK, STREET } from './config';
+import { assembleBridge, bridgeLiftAmount } from './bridge';
 import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
 import { cityProps, LAMP_HEAD, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
@@ -211,18 +212,10 @@ function patch(cx: number, cz: number, w: number, l: number, yaw: number, segW: 
   return g;
 }
 
-/** How far a canal bridge climbs. Shared by the mesh, traffic and recovery. */
-export const BRIDGE_RISE = 2.45;
-export const BRIDGE_SPAN = CANAL_W + 12;
-export const BRIDGE_DECK = STREET / 2 + 0.45;
 /** Top of the centred sidewalk / lot slab above `heightAt`. */
 const SLAB_TOP = 0.34;
 
-export function bridgeLiftAmount(along: number, span = BRIDGE_SPAN, rise = BRIDGE_RISE) {
-  const t = along / (span / 2);
-  if (Math.abs(t) > 1) return 0;
-  return rise * 0.5 * (1 + Math.cos(Math.PI * t));
-}
+export { bridgeLiftAmount } from './bridge';
 
 /** Extra height on the street bridges that actually cross a canal. */
 export function canalBridgeLift(seed: number, x: number, z: number) {
@@ -330,35 +323,9 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     const f = STREET / 2 / CELL;
     const half = CANAL_W / 2;
     const bank = (BLOCK - CANAL_W) / 2;
-    const stub = (CELL - CANAL_W) / 2;
     const strips: THREE.BufferGeometry[] = [];
 
-    const addRails = (alongX: boolean, streetPos: number) => {
-      const pieces = 5;
-      for (let k = 0; k < pieces; k++) {
-        const mid = ((k + 0.5) / pieces - 0.5) * BRIDGE_SPAN;
-        const lift = bridgeLiftAmount(mid);
-        const len = BRIDGE_SPAN / pieces + 0.2;
-        for (const s of [-1, 1]) {
-          const x = alongX ? cx + mid : streetPos + s * (BRIDGE_DECK / 2 + 0.14);
-          const z = alongX ? streetPos + s * (BRIDGE_DECK / 2 + 0.14) : cz + mid;
-          const y = heightAt(x, z) + lift + 0.58;
-          const g = alongX
-            ? new THREE.BoxGeometry(len, 1.15, 0.28)
-            : new THREE.BoxGeometry(0.28, 1.15, len);
-          trash.push(g);
-          const m = new THREE.Mesh(g, mats.rail);
-          m.position.set(x, y, z);
-          group.add(m);
-          boxes.push({
-            pos: [x, y, z],
-            half: alongX ? [len / 2, 0.62, 0.16] : [0.16, 0.62, len / 2]
-          });
-        }
-      }
-    };
-
-    const addCrossing = (alongX: boolean, streetPos: number, uvBox: number[]) => {
+    const addCrossing = (alongX: boolean, streetPos: number, innerSign: number, uvBox: number[]) => {
       const cut = alongX
         ? (axis === 'z' || axis === 'both')
         : (axis === 'x' || axis === 'both');
@@ -367,25 +334,49 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         else strips.push(patch(streetPos, cz, STREET / 2, CELL, 0, 1, segs, 0, uvBox));
         return;
       }
+      const approach = (CELL - BRIDGE_SPAN) / 2;
       if (alongX) {
-        strips.push(patch(cx - half - stub / 2, streetPos, stub, STREET / 2, 0, Math.max(2, segs - 2), 1, 0));
-        strips.push(patch(cx + half + stub / 2, streetPos, stub, STREET / 2, 0, Math.max(2, segs - 2), 1, 0));
+        strips.push(patch(cx - BRIDGE_SPAN / 2 - approach / 2, streetPos, approach, STREET / 2, 0, Math.max(2, segs - 2), 1, 0));
+        strips.push(patch(cx + BRIDGE_SPAN / 2 + approach / 2, streetPos, approach, STREET / 2, 0, Math.max(2, segs - 2), 1, 0));
       } else {
-        strips.push(patch(streetPos, cz - half - stub / 2, STREET / 2, stub, 0, 1, Math.max(2, segs - 2), 0));
-        strips.push(patch(streetPos, cz + half + stub / 2, STREET / 2, stub, 0, 1, Math.max(2, segs - 2), 0));
+        strips.push(patch(streetPos, cz - BRIDGE_SPAN / 2 - approach / 2, STREET / 2, approach, 0, 1, Math.max(2, segs - 2), 0));
+        strips.push(patch(streetPos, cz + BRIDGE_SPAN / 2 + approach / 2, STREET / 2, approach, 0, 1, Math.max(2, segs - 2), 0));
       }
-      const br = archedPatch(alongX ? cx : streetPos, alongX ? streetPos : cz, alongX, BRIDGE_SPAN, BRIDGE_DECK, segs + 8, BRIDGE_RISE);
+      const br = archedPatch(
+        alongX ? cx : streetPos,
+        alongX ? streetPos : cz,
+        alongX,
+        BRIDGE_SPAN,
+        BRIDGE_DECK,
+        segs + 8,
+        BRIDGE_RISE
+      );
       strips.push(br);
       const deck = new THREE.Mesh(br, mats.strip);
       deck.receiveShadow = true;
       group.add(deck);
-      addRails(alongX, streetPos);
+      group.add(assembleBridge(
+        alongX,
+        alongX ? cx : streetPos,
+        alongX ? streetPos : cz,
+        innerSign,
+        {
+          deck: mats.deck,
+          walk: mats.sidewalk,
+          stone: mats.stone,
+          steel: mats.metal,
+          rail: mats.rail,
+          under: mats.under
+        },
+        trash,
+        boxes
+      ));
     };
 
-    addCrossing(true, oz + STREET / 4, [0, 1, 1 - f, 1]);
-    addCrossing(true, oz + CELL - STREET / 4, [0, 1, 0, f]);
-    addCrossing(false, ox + STREET / 4, [0, f, 0, 1]);
-    addCrossing(false, ox + CELL - STREET / 4, [1 - f, 1, 0, 1]);
+    addCrossing(true, oz + STREET / 4, 1, [0, 1, 1 - f, 1]);
+    addCrossing(true, oz + CELL - STREET / 4, -1, [0, 1, 0, f]);
+    addCrossing(false, ox + STREET / 4, 1, [0, f, 0, 1]);
+    addCrossing(false, ox + CELL - STREET / 4, -1, [1 - f, 1, 0, 1]);
 
     // Solid banks so leaving the kerb never drops you into the void.
     if (axis === 'z' || axis === 'both') {

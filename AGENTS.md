@@ -21,6 +21,8 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 | Archivo | Rol |
 | --- | --- |
 | `src/game/city.ts` | Tipos de manzana, vegetación, calzada, colisionadores |
+| `src/game/bridge.ts` | Mitad de puente de canal (pilares, vigas, pretil) |
+| `src/game/SkidMarks.tsx` | Marcas de frenada en el asfalto |
 | `src/game/config.ts` | `BLOCK`, `STREET`, `CELL`, autopista (`HW_*`), `QUALITY` |
 | `src/game/Car.tsx` | Jeep del jugador, cámara, faros, red de seguridad |
 | `src/game/Traffic.tsx` | IA cinemática, carriles, semáforos, autopista |
@@ -39,7 +41,8 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 - Tráfico: no recicles un auto que el jugador todavía ve. En solape, frena; no teletransportes.
 - Semáforos: lentes en `SIGNAL_LENS_Y = [4.98, 4.57, 4.16]` y `SIGNAL_LENS_OUT = 0.70` (visores del GLB ya rotado; un terceto más bajo pinta una cuarta luz en el vientre). Un cruce, un dueño. Autopista y canal no llevan semáforo.
 - Andenes: losa redondeada **centrada** (`roundedSlab` con `translate(0,-h/2,0)`), altura ~1 m. La falda oscura va debajo, no como pedestal. Si la losa se extruye hacia arriba, los edificios quedan enterrados.
-- Canal: el puente va **sobre las calles** que cruzan el agua (`archedPatch` + `roadHeightAt`), no en el centro de la manzana. Orillas sólidas, barandas en el arco y muros en el cauce. Si el jeep cae, `Car` lo devuelve a la calle más cercana.
+- Canal: cada manzana arma **media calzada** de un puente de verdad (`assembleBridge`: losa gruesa, acera, pretil, vigas y pilares). La vecina pone la otra mitad. El tablero sigue `archedPatch` + `roadHeightAt`. Nunca un plano suelto ni un hueco bajo la rampa. Si el jeep cae, vuelve a la calle.
+- Jeep: el gas se enrolla con el tiempo (`boost`); el techo sube si mantienes el pedal. Al frenar fuerte, `stampSkid` deja rastros.
 - Controles táctiles solo en touch. En desktop, teclado. Calidad por defecto: `high` también en móvil.
 - Reloj estilo GTA en `Hud` (el día dura `DAY_SECONDS`).
 - Estacionamiento: autos alineados a `LOT_COLS` × `LOT_ROWS`, misma grilla que `lotTexture`.
@@ -51,12 +54,12 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 
 `canal` | `highway` | `avenue` | `mall` | `parking` | `works` | `tower` | `build` | `park` | `plaza` | `low`
 
-- Autopista **gana** al canal: el agua pasa por debajo y el tablero sigue. Canal solo = cauce + puente en cada calle que lo cruza (subir y bajar). El tráfico usa `roadHeightAt` para no flotar.
+- Autopista **gana** al canal: el agua pasa por debajo y el tablero sigue. Canal solo = cauce + puente de verdad en cada calle que lo cruza. El tráfico usa `roadHeightAt`.
 - Semilla `18`: autopista norte-sur al nacer. Semilla `7` (default): la más cercana ~125 m al oeste.
 
 ## Fallos que el usuario ya reportó
 
-Noche oscura / faros apagados, luces que parpadean, árboles blancos o en el pavimento, autos que se atraviesan o flotan en pendiente, jeep que cae infinito, llantas con parche blanco, semáforos cuadrados o en RGB sin pausa, LOD de edificios que “cambia de modelo”, SSR con fantasmas, arbustos a mitad de calle, vibración en móvil, autopista cortada por “espejos” de agua, semáforos de más, luz por debajo del andén, parkings que no coinciden con los autos.
+Noche oscura / faros apagados, luces que parpadean, árboles blancos o en el pavimento, autos que se atraviesan o flotan en pendiente, jeep que cae infinito, llantas con parche blanco, semáforos cuadrados o en RGB sin pausa, LOD de edificios que “cambia de modelo”, SSR con fantasmas, arbustos a mitad de calle, vibración en móvil, autopista cortada por “espejos” de agua, semáforos de más, luz por debajo del andén, parkings que no coinciden con los autos, rampa suelta en vez de puente.
 
 Antes de dar por cerrado un look, conduce de verdad: de día y de noche, cuesta, cruce, autopista.
 

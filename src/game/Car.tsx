@@ -11,14 +11,17 @@ import { CELL, STREET } from './config';
 import { heightAt } from './rng';
 import { blockTypeAt, roadHeightAt } from './city';
 import { burstSparks } from './Sparks';
+import { stampSkid } from './SkidMarks';
 import { trafficHit } from './Traffic';
 
 const MASS = 1150;
-const ENGINE = 3400;
-const BRAKE_FORCE = 110;
+const ENGINE = 3600;
+const BRAKE_FORCE = 125;
 const MAX_STEER = 0.55;
-/** Engine force fades to nothing here, which is what caps the top speed. */
-const TOP_SPEED = 30;
+/** Held throttle winds this up: the longer you keep the pedal down, the
+ *  higher the ceiling. 26 m/s is a city cruise; full wind-up is ~60 m/s. */
+const CRUISE_SPEED = 26;
+const BOOST_SPEED = 34;
 const REST_LEN = 0.42;
 const MAX_TRAVEL = 0.25;
 /** How far the springs settle under the car's own weight. Subtracted from the
@@ -105,6 +108,8 @@ export function Car() {
   const spin = useRef(0);
   const flipped = useRef(0);
   const sparkCd = useRef(0);
+  const boost = useRef(0);
+  const skidCd = useRef(0);
 
   useEffect(() => {
     if (!body.current) return;
@@ -162,8 +167,16 @@ export function Car() {
 
     // the brake pedal doubles as reverse once the car has stopped
     const reversing = controls.brake > 0 && speed < 0.8;
-    const taper = Math.max(0, 1 - Math.max(0, speed) / TOP_SPEED);
-    const drive = controls.throttle * ENGINE * taper - (reversing ? ENGINE * 0.45 : 0);
+    const dt = 1 / 60;
+    if (controls.throttle > 0.15 && !reversing) {
+      boost.current = Math.min(1, boost.current + dt / 5.2);
+    } else {
+      boost.current = Math.max(0, boost.current - dt / 1.6);
+    }
+    const top = CRUISE_SPEED + boost.current * BOOST_SPEED;
+    const power = ENGINE * (0.82 + boost.current * 1.45);
+    const taper = Math.max(0.1, 1 - Math.max(0, speed) / top);
+    const drive = controls.throttle * power * taper - (reversing ? ENGINE * 0.45 : 0);
     // negated because the model's nose points down -Z
     c.setWheelEngineForce(2, -drive);
     c.setWheelEngineForce(3, -drive);
@@ -238,6 +251,19 @@ export function Car() {
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
       rb.setAngvel({ x: 0, y: 0, z: 0 }, true);
       flipped.current = 0;
+    }
+
+    skidCd.current -= delta;
+    const braking = controls.brake > 0 && Math.abs(speed) > 5.2 && !(controls.brake > 0 && speed < 0.8);
+    if (braking && skidCd.current <= 0) {
+      const yaw = Math.atan2(-fwd.x, -fwd.z);
+      const rx = -fwd.z, rz = fwd.x;
+      const hx = spec.W * 0.36;
+      const hz = spec.L * 0.3;
+      const y = roadHeightAt(seed, t.x, t.z) + 0.04;
+      stampSkid(t.x + rx * hx - fwd.x * hz, y, t.z + rz * hx - fwd.z * hz, yaw);
+      stampSkid(t.x - rx * hx - fwd.x * hz, y, t.z - rz * hx - fwd.z * hz, yaw);
+      skidCd.current = Math.max(0.035, 0.085 - Math.abs(speed) * 0.0018);
     }
 
     sparkCd.current -= delta;

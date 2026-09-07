@@ -9,6 +9,7 @@ import { Car } from '@/game/Car';
 import { Traffic } from '@/game/Traffic';
 import { DayNight } from '@/game/DayNight';
 import { Sparks } from '@/game/Sparks';
+import { SkidMarks } from '@/game/SkidMarks';
 import { SKY_RADIUS } from '@/game/config';
 import { qualityOf, useGame } from '@/game/store';
 import { Hud } from './Hud';
@@ -50,6 +51,7 @@ export default function Game() {
             <Car />
             <Traffic />
             <Sparks />
+            <SkidMarks />
           </Physics>
         </Suspense>
       </Canvas>

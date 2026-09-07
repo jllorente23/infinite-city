@@ -12,6 +12,11 @@ export const HW_WIDTH = HW_LANE * 4 + HW_MEDIAN + HW_SHOULDER * 2;
 export const HW_INNER = HW_MEDIAN / 2 + HW_LANE / 2;
 export const HW_OUTER = HW_MEDIAN / 2 + HW_LANE * 1.5;
 export const CANAL_W = 16;
+/** Full roadway plus a kerb. Each canal cell builds one half; together they
+ *  read as a single wide bridge. */
+export const BRIDGE_DECK = STREET / 2 + 0.85;
+export const BRIDGE_SPAN = BLOCK;
+export const BRIDGE_RISE = 2.7;
 export const CORNER_R = 3.4;
 export const LOT_COLS = 8;
 export const LOT_ROWS = 2;
