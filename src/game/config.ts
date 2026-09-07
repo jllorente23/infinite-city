@@ -1,7 +1,11 @@
-export const BLOCK = 36;
+/** A block is big enough to hold a grid of lots, so a city block reads as a
+ *  row of buildings rather than one object dropped in the middle. */
+export const BLOCK = 80;
 export const STREET = 14;
 export const CELL = BLOCK + STREET;
 export const SIDEWALK = 4;
+/** Lots per side of a block. The interior lot of an odd grid becomes a yard. */
+export const LOT_GRID = [2, 3, 3, 4];
 export const DAY_SECONDS = 240;
 
 /** Dual-carriageway that occasionally replaces a whole corridor of blocks. */
@@ -11,18 +15,18 @@ export const HW_SHOULDER = 2.4;
 export const HW_WIDTH = HW_LANE * 4 + HW_MEDIAN + HW_SHOULDER * 2;
 export const HW_INNER = HW_MEDIAN / 2 + HW_LANE / 2;
 export const HW_OUTER = HW_MEDIAN / 2 + HW_LANE * 1.5;
-export const CANAL_W = 16;
+export const CANAL_W = 26;
 /** Kenney's `road-bridge` tile carries its roadway between two kerbs that take
  *  up a fifth of the tile, so this is the scale that makes the lanes `STREET`
  *  wide. */
 export const BRIDGE_DECK_W = STREET / 0.8;
-/** Deck plus ramps add up to exactly one cell, so a crossing never reaches past
- *  the neighbouring block. */
-export const BRIDGE_SPAN = 26;
-export const BRIDGE_RAMP = CELL / 2 - BRIDGE_SPAN / 2;
-export const BRIDGE_RISE = 1.25;
+/** Deck plus ramps must stay inside one cell so a crossing never reaches past
+ *  the neighbouring block. Keep the ramp short enough that the climb is felt. */
+export const BRIDGE_SPAN = 38;
+export const BRIDGE_RAMP = 15;
+export const BRIDGE_RISE = 1.5;
 /** One crossing every this many blocks along a canal. */
-export const BRIDGE_EVERY = 3;
+export const BRIDGE_EVERY = 2;
 export const CORNER_R = 3.4;
 export const LOT_COLS = 8;
 export const LOT_ROWS = 2;
@@ -30,9 +34,11 @@ export const LOT_SLOT_W = 2.55;
 export const LOT_SLOT_D = 5.1;
 export const LOT_AISLE = 5.8;
 
+/** Radii are in cells, so they shrink as `CELL` grows: what matters is how many
+ *  square metres are alive, not how many chunks. */
 export const QUALITY = {
-  high: { loadRadius: 8, detailRadius: 2, midRadius: 5, shadows: true, dpr: 2, traffic: 24, clouds: true },
-  low: { loadRadius: 6, detailRadius: 1, midRadius: 4, shadows: false, dpr: 1.3, traffic: 14, clouds: false }
+  high: { loadRadius: 4, detailRadius: 1, midRadius: 2, shadows: true, dpr: 2, traffic: 24, clouds: true },
+  low: { loadRadius: 3, detailRadius: 1, midRadius: 2, shadows: false, dpr: 1.3, traffic: 14, clouds: false }
 };
 
 /** Radius of the sky dome. The camera's far plane has to sit beyond this or the

@@ -9,7 +9,7 @@ import { useCityCars } from './carModels';
 import { controls, playerPos, useGame } from './store';
 import { CELL, STREET } from './config';
 import { heightAt } from './rng';
-import { blockTypeAt, nearestCanalCrossing, roadHeightAt } from './city';
+import { blockTypeAt, canalBlocks, nearestCanalCrossing, roadHeightAt } from './city';
 import { burstSparks } from './Sparks';
 import { stampSkid } from './SkidMarks';
 import { trafficHit } from './Traffic';
@@ -247,21 +247,23 @@ export function Car() {
       const yaw = Math.atan2(-fwd.x, -fwd.z);
       let sx = t.x, sz = t.z;
       if (wet) {
-        const lx = ((t.x % CELL) + CELL) % CELL;
-        const lz = ((t.z % CELL) + CELL) % CELL;
-        const ox = t.x - lx, oz = t.z - lz;
+        const ox = t.x - (((t.x % CELL) + CELL) % CELL);
+        const oz = t.z - (((t.z % CELL) + CELL) % CELL);
+        // Streets run along the cell edges. The corners are always dry land, so
+        // there is a landing spot even when every edge is water.
         const choices = [
-          { x: ox + STREET / 4, z: t.z },
-          { x: ox + CELL - STREET / 4, z: t.z },
-          { x: t.x, z: oz + STREET / 4 },
-          { x: t.x, z: oz + CELL - STREET / 4 }
+          { x: ox, z: t.z }, { x: ox + CELL, z: t.z },
+          { x: t.x, z: oz }, { x: t.x, z: oz + CELL },
+          { x: ox, z: oz }, { x: ox + CELL, z: oz },
+          { x: ox, z: oz + CELL }, { x: ox + CELL, z: oz + CELL }
         ];
-        let best = choices[0], bestD = Infinity;
+        let bestD = Infinity;
         for (const c of choices) {
+          // Never drop the jeep back into the canal it just fell into.
+          if (canalBlocks(seed, c.x, c.z)) continue;
           const d = Math.hypot(c.x - t.x, c.z - t.z);
-          if (d < bestD) { best = c; bestD = d; }
+          if (d < bestD) { bestD = d; sx = c.x; sz = c.z; }
         }
-        sx = best.x; sz = best.z;
       }
       rb.setTranslation({ x: sx, y: roadHeightAt(seed, sx, sz) + START_CLEARANCE + 0.25, z: sz }, true);
       rb.setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), true);

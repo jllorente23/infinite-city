@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, SIDEWALK, STREET } from './config';
+import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_GRID, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, SIDEWALK, STREET } from './config';
 import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
 import { BRIDGE_KERB, BRIDGE_SLAB, BRIDGE_TOP, cityProps, LAMP_HEAD, PILLAR_TOP, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
@@ -11,7 +11,7 @@ import { cloneVehicle, pickHue, VehicleKind } from './vehicles';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-export type BlockType = 'canal' | 'highway' | 'avenue' | 'mall' | 'parking' | 'works' | 'tower' | 'build' | 'park' | 'plaza' | 'low';
+export type BlockType = 'canal' | 'highway' | 'mall' | 'parking' | 'works' | 'tower' | 'build' | 'park' | 'plaza' | 'low';
 export type HighwayAxis = 'x' | 'z' | 'both';
 
 export type BoxCollider = { pos: [number, number, number]; half: [number, number, number] };
@@ -58,18 +58,8 @@ function onHighwayDeck(seed: number, x: number, z: number, pad = 0) {
   return false;
 }
 
-function onAvenueDeck(seed: number, x: number, z: number, pad = 0) {
-  const i = cellOf(x), j = cellOf(z);
-  if (blockTypeAt(seed, i, j) !== 'avenue') return false;
-  const cx = i * CELL + CELL / 2, cz = j * CELL + CELL / 2;
-  const w = STREET / 2 + pad;
-  if (isAveA(seed, i, j) && Math.abs((x - cx) + (z - cz)) / Math.SQRT2 < w) return true;
-  if (isAveB(seed, i, j) && Math.abs((x - cx) - (z - cz)) / Math.SQRT2 < w) return true;
-  return false;
-}
-
 function onDriveable(seed: number, x: number, z: number, pad = 0) {
-  return onRoadway(x, z, pad) || onHighwayDeck(seed, x, z, pad) || onAvenueDeck(seed, x, z, pad);
+  return onRoadway(x, z, pad) || onHighwayDeck(seed, x, z, pad);
 }
 
 function plantRadius(kind: NatureKind, s: number) {
@@ -96,8 +86,6 @@ function bandPick(seed: number, v: number, salt: number) {
 }
 export const isCanalCol = (seed: number, i: number) => bandPick(seed, i, 777);
 export const isCanalRow = (seed: number, j: number) => bandPick(seed, j, 888);
-const isAveA = (seed: number, i: number, j: number) => mulberry32(hash3(seed, i + j, 4242))() < 0.05;
-const isAveB = (seed: number, i: number, j: number) => mulberry32(hash3(seed, i - j, 4343))() < 0.05;
 
 /** One dual-carriageway every ~10 blocks, so you meet an autopista while driving. */
 function corridorPick(seed: number, v: number, salt: number) {
@@ -129,6 +117,27 @@ export function highwayAxis(seed: number, i: number, j: number): HighwayAxis | n
 }
 
 /** One cell owns each junction so a crossing never gets 16 poles. */
+/** How far behind the kerb a signal post stands. Hugging the kerb makes it
+ *  read as if it were planted in the roadway. */
+export const SIGNAL_SETBACK = 2.6;
+
+/** The four posts of a junction, one per approach. Shared with the checks so
+ *  nothing can drift into the asphalt unnoticed. */
+export function signalPosts(jx: number, jz: number) {
+  const d = STREET / 2 + SIGNAL_SETBACK;
+  return [
+    { x: jx - d, z: jz - d, yaw: propYaw(-1, 0), axisX: true },
+    { x: jx + d, z: jz - d, yaw: propYaw(1, 0), axisX: true },
+    { x: jx - d, z: jz + d, yaw: propYaw(0, -1), axisX: false },
+    { x: jx + d, z: jz + d, yaw: propYaw(0, 1), axisX: false }
+  ];
+}
+
+/** True when a point sits on any surface a car drives on. */
+export function isDriveable(seed: number, x: number, z: number, pad = 0) {
+  return onDriveable(seed, x, z, pad);
+}
+
 export function hasSignals(seed: number, jx: number, jz: number) {
   const nI = Math.round(jx / CELL);
   const nJ = Math.round(jz / CELL);
@@ -146,7 +155,6 @@ export function blockTypeAt(seed: number, i: number, j: number): BlockType {
   const r = rnd();
   if (highwayAxis(seed, i, j)) return 'highway';
   if (canalAxis(seed, i, j)) return 'canal';
-  if (isAveA(seed, i, j) || isAveB(seed, i, j)) return 'avenue';
   if (r < 0.06 && dens < 0.62) return 'mall';
   if (r < 0.14 && dens < 0.72) return 'parking';
   if (r < 0.2 && dens < 0.58) return 'works';
@@ -409,7 +417,12 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       w.position.set(cx, wy, cz);
       group.add(w);
     }
-    boxes.push({ pos: [cx, hc - 2.15, cz], half: [CANAL_W / 2 - 0.4, 0.55, CANAL_W / 2 - 0.4] });
+    // A bed under the whole channel, not just its middle. Without it anything
+    // that does reach the water keeps falling and never triggers a recovery.
+    const bed = (w: number, d: number) =>
+      boxes.push({ pos: [cx, hc - 2.15, cz], half: [w / 2, 0.55, d / 2] });
+    if (axis === 'x' || axis === 'both') bed(CELL, CANAL_W - 0.8);
+    if (axis === 'z' || axis === 'both') bed(CANAL_W - 0.8, CELL);
   };
 
   if (type === 'canal') {
@@ -658,9 +671,6 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     const tg = patch(cx, cz, CELL, CELL, 0, segs, segs, 0);
     trash.push(tg);
     ground = tg;
-    // The diagonal avenue is its own glossy strip over the regular city tile.
-    // A fully asphalt base made the whole block look like roadway and left
-    // vegetation standing in the middle of it.
     const tile = new THREE.Mesh(tg, mats.tile);
     tile.receiveShadow = true;
     group.add(tile);
@@ -669,32 +679,14 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       const ez = k < 2 ? 1 : -1;
       const sx = cx + ex * (BLOCK / 2 - 1.2);
       const sz = cz + ez * (BLOCK / 2 - 1.2);
-      let ok = true;
-      if (type === 'avenue') {
-        if (isAveA(seed, i, j) && Math.abs(sx - cx + (sz - cz)) / 1.4142 < STREET / 2 + 3) ok = false;
-        if (isAveB(seed, i, j) && Math.abs(sx - cx - (sz - cz)) / 1.4142 < STREET / 2 + 3) ok = false;
-      }
       // Lean each lamp's arm over a different one of the four streets, so a block
       // lights all of its kerbs instead of doubling up on one.
       const armAlongX = k === 0 || k === 3;
-      if (ok) lamps.push({ x: sx, z: sz, yaw: armAlongX ? propYaw(ex, 0) : propYaw(0, ez) });
+      lamps.push({ x: sx, z: sz, yaw: armAlongX ? propYaw(ex, 0) : propYaw(0, ez) });
     }
   }
 
-  if (type === 'avenue') {
-    const yaws: number[] = [];
-    if (isAveA(seed, i, j)) yaws.push(Math.PI / 4);
-    if (isAveB(seed, i, j)) yaws.push(-Math.PI / 4);
-    for (const yaw of yaws) {
-      const sg = patch(cx, cz, STREET, CELL * 1.4142 + 1, yaw, 2, segs + 4, 0.2);
-      trash.push(sg);
-      const m = new THREE.Mesh(sg, mats.strip);
-      m.receiveShadow = true;
-      group.add(m);
-    }
-    // Keep avenue blocks open. Even trees outside the diagonal strip cast a
-    // canopy over one of its lanes and read as if they grew through asphalt.
-  } else if (type === 'parking' || type === 'mall' || type === 'works') {
+  if (type === 'parking' || type === 'mall' || type === 'works') {
     const half = inner / 2;
     if (!far) flat(geos.curb, mats.curb, cx, hc - 0.23, cz);
     flat(geos.sidewalk, mats.sidewalk, cx, hc - 0.2, cz, 0, true);
@@ -885,7 +877,9 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
           const fit = Math.min(w / b.size.w, d / b.size.d);
           const sx = fit;
           const sz = fit;
-          const sy = Math.max(0.72, Math.min(1.35, h / b.size.h));
+          // Tie the height scale to the footprint scale or a big lot gets a
+          // building stretched wide and left squat.
+          const sy = Math.max(fit * 0.75, Math.min(fit * 2, h / b.size.h));
           const bw = b.size.w * sx;
           const bh = b.size.h * sy;
           const bd = b.size.d * sz;
@@ -923,26 +917,43 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         group.add(mesh);
       };
 
-      if (type === 'tower' || layout < 0.3) {
-        addB(cx, cz, inner * (0.55 + rnd() * 0.3), inner * (0.55 + rnd() * 0.3), hBase);
-      } else if (layout < 0.65) {
-        const vert = rnd() < 0.5;
-        for (let k = 0; k < 2; k++) {
-          const off = (k ? 1 : -1) * inner / 4;
-          const hh = hBase * (0.7 + rnd() * 0.6);
-          if (vert) addB(cx + off, cz, inner / 2 - 1.5, inner * (0.6 + rnd() * 0.3), hh);
-          else addB(cx, cz + off, inner * (0.6 + rnd() * 0.3), inner / 2 - 1.5, hh);
-        }
-      } else {
-        for (let k = 0; k < 4; k++) {
-          addB(cx + (k % 2 ? 1 : -1) * inner / 4, cz + (k < 2 ? 1 : -1) * inner / 4, inner / 2 - 2, inner / 2 - 2, hBase * (0.6 + rnd() * 0.8));
+      // The block is carved into lots and each one gets its own building, so a
+      // block reads as a row of neighbours instead of one object in a field.
+      // Towers keep bigger lots; low-rise packs them tighter.
+      const grid = type === 'tower'
+        ? 2 + Math.floor(rnd() * 2)
+        : LOT_GRID[Math.floor(layout * LOT_GRID.length)] + (type === 'low' ? 1 : 0);
+      const lot = inner / grid;
+      // An odd grid has a lot that touches no street. Leave it as a courtyard.
+      const yard = grid % 2 === 1 ? (grid - 1) / 2 : -1;
+      for (let a = 0; a < grid; a++) {
+        for (let b = 0; b < grid; b++) {
+          const x = cx - inner / 2 + lot * (a + 0.5);
+          const z = cz - inner / 2 + lot * (b + 0.5);
+          if (a === yard && b === yard) {
+            for (let k = 0; k < 3; k++) {
+              const tx = x + (rnd() * 2 - 1) * lot * 0.3;
+              const tz = z + (rnd() * 2 - 1) * lot * 0.3;
+              if (!onDriveable(seed, tx, tz, 4.2)) {
+                trees.push({ x: tx, z: tz, s: 0.7 + rnd() * 0.3, kind: TREE_KINDS[Math.floor(rnd() * TREE_KINDS.length)] });
+              }
+            }
+            continue;
+          }
+          // A gap here and there keeps a block from looking stamped out.
+          if (grid > 2 && rnd() < 0.12) continue;
+          const gap = 1.5 + rnd() * 1.5;
+          addB(x, z, lot - gap, lot - gap, hBase * (0.55 + rnd() * 0.9));
         }
       }
-      if (rnd() < 0.6) {
+      // Street trees along one kerb of the block.
+      if (rnd() < 0.75) {
         const side = rnd() < 0.5 ? 1 : -1;
-        for (let k = -1; k <= 1; k += 2) {
-          const tx = cx + k * BLOCK * 0.22;
-          const tz = cz + side * (BLOCK / 2 - 3.3);
+        const onX = rnd() < 0.5;
+        for (let k = 0; k < 4; k++) {
+          const along = (k - 1.5) * (BLOCK * 0.24);
+          const tx = onX ? cx + along : cx + side * (BLOCK / 2 - 3.3);
+          const tz = onX ? cz + side * (BLOCK / 2 - 3.3) : cz + along;
           if (!onDriveable(seed, tx, tz, 4.2)) trees.push({ x: tx, z: tz, s: 0.62 + rnd() * 0.18, kind: 'common' });
         }
       }
@@ -991,7 +1002,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         if (onDriveable(seed, px, pz, plantRadius(kind, s))) continue;
         plants.push({ x: px, z: pz, s, yaw: rnd() * Math.PI * 2, kind });
       }
-    } else if (type !== 'parking' && type !== 'mall' && type !== 'works' && type !== 'avenue') {
+    } else if (type !== 'parking' && type !== 'mall' && type !== 'works') {
       for (let k = 0; k < 4; k++) {
         const along = (rnd() - 0.5) * (inner - 8);
         const side = k < 2 ? 1 : -1;
@@ -1130,7 +1141,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         if (onDriveable(seed, px, pz, 1.6)) continue;
         flat(geos.tactile, mats.tactile, px, heightAt(px, pz) + 0.08, pz);
       }
-      if (type !== 'avenue') {
+      {
         for (let k = 0; k < 3; k++) {
           const along = (rnd() - 0.5) * (inner - 8);
           const side = rnd() < 0.5 ? 1 : -1;
@@ -1156,20 +1167,14 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     }
 
     const jx = ox + CELL, jz = oz + CELL;
-    const lit = type !== 'avenue' && type !== 'highway' && hasSignals(seed, jx, jz);
+    const lit = hasSignals(seed, jx, jz);
     if (lit) {
       const housingI = props
         ? new THREE.InstancedMesh(props.signal.geometry, props.signal.material, 4)
         : null;
       if (housingI) { housingI.castShadow = true; group.add(housingI); }
       const lens = new THREE.Vector3();
-      const approaches = [
-        { x: jx - (STREET / 2 + 0.9), z: jz - (STREET / 2 + 0.9), yaw: propYaw(-1, 0), axisX: true },
-        { x: jx + (STREET / 2 + 0.9), z: jz - (STREET / 2 + 0.9), yaw: propYaw(1, 0), axisX: true },
-        { x: jx - (STREET / 2 + 0.9), z: jz + (STREET / 2 + 0.9), yaw: propYaw(0, -1), axisX: false },
-        { x: jx + (STREET / 2 + 0.9), z: jz + (STREET / 2 + 0.9), yaw: propYaw(0, 1), axisX: false }
-      ];
-      approaches.forEach((ap, k) => {
+      signalPosts(jx, jz).forEach((ap, k) => {
         const y = heightAt(ap.x, ap.z);
         let dots: THREE.Mesh[];
         if (housingI) {
@@ -1198,7 +1203,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         signals.push({ nx: jx, nz: jz, axisX: ap.axisX, dots });
         boxes.push({ pos: [ap.x, y + 2.4, ap.z], half: [0.22, 2.4, 0.22] });
       });
-    } else if (type !== 'avenue' && type !== 'highway') {
+    } else if (type !== 'highway') {
       const stop = ((hash3(seed, i + 3, j + 11) >>> 0) % 100) < 70;
       const kind: SignKind = stop ? 'stop' : 'yield';
       const sx = cx + (BLOCK / 2 - 1.15);
@@ -1228,7 +1233,7 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     }
 
     const parked: { x: number; z: number; yaw: number }[] = [];
-    if (type !== 'avenue' && type !== 'highway' && rnd() < 0.22) {
+    if (type !== 'highway' && rnd() < 0.22) {
       const side = rnd() < 0.5 ? 1 : -1;
       const along = (rnd() - 0.5) * (BLOCK - 16);
       const kerb = BLOCK / 2 + 3.15;
@@ -1236,18 +1241,26 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       else parked.push({ x: cx + side * kerb, z: cz + along, yaw: 0 });
     }
     for (const lot of lotCars) {
-      const spanA = LOT_COLS * LOT_SLOT_W;
-      const spanB = LOT_ROWS * LOT_SLOT_D + LOT_AISLE;
-      for (let rr = 0; rr < LOT_ROWS; rr++) {
-        for (let cc = 0; cc < LOT_COLS; cc++) {
-          if (rnd() < 0.28) continue;
-          const a = -spanA / 2 + (cc + 0.5) * LOT_SLOT_W;
-          const rowZ = rr === 0 ? -spanB / 2 + LOT_SLOT_D / 2 : spanB / 2 - LOT_SLOT_D / 2;
-          const lx = lot.yaw === 0 ? lot.x + a : lot.x + rowZ;
-          const lz = lot.yaw === 0 ? lot.z + rowZ : lot.z + a;
-          if (Math.abs(lx - lot.x) > lot.half - 2.1 || Math.abs(lz - lot.z) > lot.half - 2.1) continue;
-          const yaw = lot.yaw === 0 ? (rr === 0 ? 0 : Math.PI) : (rr === 0 ? -Math.PI / 2 : Math.PI / 2);
-          parked.push({ x: lx, z: lz, yaw });
+      // Fill the lot with as many back-to-back bay bands as it holds instead of
+      // a fixed pair of rows marooned in the middle of a big block.
+      const usable = 2 * (lot.half - 2.1);
+      const band = LOT_ROWS * LOT_SLOT_D + LOT_AISLE;
+      const bands = Math.max(1, Math.floor(usable / band));
+      const cols = Math.max(LOT_COLS, Math.floor(usable / LOT_SLOT_W));
+      const spanA = cols * LOT_SLOT_W;
+      for (let bb = 0; bb < bands; bb++) {
+        const bandMid = -(bands * band) / 2 + (bb + 0.5) * band;
+        for (let rr = 0; rr < LOT_ROWS; rr++) {
+          for (let cc = 0; cc < cols; cc++) {
+            if (rnd() < 0.28) continue;
+            const a = -spanA / 2 + (cc + 0.5) * LOT_SLOT_W;
+            const rowZ = bandMid + (rr === 0 ? -(band / 2 - LOT_SLOT_D / 2) : band / 2 - LOT_SLOT_D / 2);
+            const lx = lot.yaw === 0 ? lot.x + a : lot.x + rowZ;
+            const lz = lot.yaw === 0 ? lot.z + rowZ : lot.z + a;
+            if (Math.abs(lx - lot.x) > lot.half - 2.1 || Math.abs(lz - lot.z) > lot.half - 2.1) continue;
+            const yaw = lot.yaw === 0 ? (rr === 0 ? 0 : Math.PI) : (rr === 0 ? -Math.PI / 2 : Math.PI / 2);
+            parked.push({ x: lx, z: lz, yaw });
+          }
         }
       }
     }
