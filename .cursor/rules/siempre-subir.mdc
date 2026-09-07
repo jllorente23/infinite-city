@@ -1,0 +1,14 @@
+---
+description: Cada cambio se commitea y se sube al branch. Leer AGENTS.md.
+alwaysApply: true
+---
+
+# Siempre subir al branch
+
+Tras cualquier cambio de código o de instrucciones de este repo:
+
+1. Commit en el branch actual (casi siempre `main`).
+2. `git push origin HEAD` en el mismo turno. No esperar a que el usuario lo pida.
+3. El usuario prueba en Vercel (`https://infinite-city-sigma.vercel.app`). Si el cambio no está en `origin`, para él no existe.
+
+Mensajes en español, centrados en el porqué. Detalle del proyecto y trampas conocidas: `AGENTS.md`. Actualiza ese archivo cuando cambie una convención.
