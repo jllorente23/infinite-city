@@ -66,6 +66,28 @@ html, body {
 }
 .hud .val { font-size: 26px; font-weight: 500; line-height: 1; }
 .hud .cap { font-size: 11px; opacity: 0.85; margin-top: 3px; }
+.gta-clock {
+  min-width: 118px;
+  padding: 8px 12px 7px;
+  background: rgba(8, 10, 14, 0.72);
+  border: 2px solid rgba(236, 220, 150, 0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 4px 14px rgba(0, 0, 0, 0.35);
+  text-align: right;
+}
+.gta-clock-time {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  color: #f3ead0;
+}
+.gta-clock-ap {
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: #d7c27a;
+}
 
 .controls {
   position: absolute;
@@ -116,7 +138,7 @@ html, body {
 .gear {
   position: absolute;
   right: 12px;
-  top: calc(70px + env(safe-area-inset-top));
+  top: calc(92px + env(safe-area-inset-top));
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -129,7 +151,7 @@ html, body {
 .panel {
   position: absolute;
   right: 12px;
-  top: calc(118px + env(safe-area-inset-top));
+  top: calc(140px + env(safe-area-inset-top));
   width: 236px;
   padding: 12px;
   background: rgba(14, 18, 24, 0.92);

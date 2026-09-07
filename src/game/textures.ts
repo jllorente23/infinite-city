@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLOCK, CELL, HW_LANE, HW_MEDIAN, HW_SHOULDER, HW_WIDTH, SIDEWALK, STREET } from './config';
+import { BLOCK, CELL, CORNER_R, HW_LANE, HW_MEDIAN, HW_SHOULDER, HW_WIDTH, LOT_COLS, LOT_ROWS, SIDEWALK, STREET } from './config';
 import { mulberry32 } from './rng';
 
 function canvas(px: number) {
@@ -271,14 +271,61 @@ function lotTexture() {
   const px = 512;
   const c = canvas(px);
   const g = noiseFill(c, '#3a3f47', 6);
-  g.strokeStyle = '#dcd9cf'; g.lineWidth = 3;
-  for (let r = 0; r < 4; r++) {
-    const y0 = 40 + r * 118;
-    for (let k = 0; k < 12; k++) { g.beginPath(); g.moveTo(24 + k * 39, y0); g.lineTo(24 + k * 39, y0 + 74); g.stroke(); }
-    g.beginPath(); g.moveTo(24, y0); g.lineTo(24 + 11 * 39, y0); g.stroke();
-    g.beginPath(); g.moveTo(24, y0 + 74); g.lineTo(24 + 11 * 39, y0 + 74); g.stroke();
+  const pad = 28;
+  const aisle = 78;
+  const rowH = (px - pad * 2 - aisle) / LOT_ROWS;
+  const slotW = (px - pad * 2) / LOT_COLS;
+  g.strokeStyle = '#dcd9cf';
+  g.lineWidth = 4;
+  for (let r = 0; r < LOT_ROWS; r++) {
+    const y0 = pad + r * (rowH + aisle);
+    g.strokeRect(pad, y0, px - pad * 2, rowH);
+    for (let k = 1; k < LOT_COLS; k++) {
+      g.beginPath();
+      g.moveTo(pad + k * slotW, y0 + 6);
+      g.lineTo(pad + k * slotW, y0 + rowH - 6);
+      g.stroke();
+    }
   }
   return finish(c);
+}
+
+function sidewalkTexture() {
+  const px = 512;
+  const c = canvas(px);
+  const g = noiseFill(c, '#c4c1b8', 8);
+  g.strokeStyle = 'rgba(90,86,78,0.22)';
+  g.lineWidth = 2;
+  const step = px / 8;
+  for (let k = 0; k <= 8; k++) {
+    g.beginPath(); g.moveTo(k * step, 0); g.lineTo(k * step, px); g.stroke();
+    g.beginPath(); g.moveTo(0, k * step); g.lineTo(px, k * step); g.stroke();
+  }
+  g.fillStyle = 'rgba(70,68,62,0.35)';
+  g.beginPath(); g.arc(px * 0.28, px * 0.62, 11, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(px * 0.74, px * 0.3, 11, 0, Math.PI * 2); g.fill();
+  return finish(c, true, 6);
+}
+
+/** Ground slab with rounded corners so manzanas are not hard 90° blocks. */
+export function roundedSlab(w: number, h: number, d: number, r = CORNER_R) {
+  const hw = w / 2, hd = d / 2;
+  const rr = Math.min(r, hw - 0.08, hd - 0.08);
+  const s = new THREE.Shape();
+  s.moveTo(-hw + rr, -hd);
+  s.lineTo(hw - rr, -hd);
+  s.absarc(hw - rr, -hd + rr, rr, -Math.PI / 2, 0, false);
+  s.lineTo(hw, hd - rr);
+  s.absarc(hw - rr, hd - rr, rr, 0, Math.PI / 2, false);
+  s.lineTo(-hw + rr, hd);
+  s.absarc(-hw + rr, hd - rr, rr, Math.PI / 2, Math.PI, false);
+  s.lineTo(-hw, -hd + rr);
+  s.absarc(-hw + rr, -hd + rr, rr, Math.PI, Math.PI * 1.5, false);
+  const g = new THREE.ExtrudeGeometry(s, { depth: h, bevelEnabled: false, curveSegments: 7 });
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, h / 2, 0);
+  g.computeVertexNormals();
+  return g;
 }
 
 /** Facade: colour map plus an emissive map so windows light up at night. */
@@ -369,8 +416,10 @@ export function createAssets() {
     hwyBoth: roadMat(highwayTexture('both')),
     jersey: new THREE.MeshLambertMaterial({ color: 0xc5c7c2 }),
     lotFloor: new THREE.MeshLambertMaterial({ map: lotTexture() }),
-    sidewalk: new THREE.MeshLambertMaterial({ color: 0xc4c1b8 }),
+    sidewalk: new THREE.MeshLambertMaterial({ map: sidewalkTexture(), color: 0xc4c1b8 }),
     curb: new THREE.MeshLambertMaterial({ color: 0x8b877f }),
+    under: new THREE.MeshLambertMaterial({ color: 0x16181c }),
+    tactile: new THREE.MeshLambertMaterial({ color: 0xc9b48a }),
     grass: new THREE.MeshLambertMaterial({ color: 0x5f9450 }),
     plaza: new THREE.MeshLambertMaterial({ color: 0xd2c7b0 }),
     lot: new THREE.MeshLambertMaterial({ color: 0x9d978c }),
@@ -409,9 +458,12 @@ export function createAssets() {
   };
 
   const geos = {
-    curb: new THREE.BoxGeometry(BLOCK + 1.2, 0.9, BLOCK + 1.2),
-    sidewalk: new THREE.BoxGeometry(BLOCK, 1.0, BLOCK),
-    inner: new THREE.BoxGeometry(BLOCK - SIDEWALK * 2, 1.0, BLOCK - SIDEWALK * 2),
+    curb: roundedSlab(BLOCK + 1.2, 2.2, BLOCK + 1.2, CORNER_R + 0.4),
+    sidewalk: roundedSlab(BLOCK, 2.6, BLOCK, CORNER_R),
+    inner: roundedSlab(BLOCK - SIDEWALK * 2, 1.15, BLOCK - SIDEWALK * 2, Math.max(1.2, CORNER_R - 1.6)),
+    skirt: new THREE.BoxGeometry(BLOCK + 0.6, 4.4, BLOCK + 0.6),
+    manhole: new THREE.CircleGeometry(0.38, 16),
+    tactile: new THREE.BoxGeometry(1.6, 0.06, 1.6),
     trunk: new THREE.CylinderGeometry(0.22, 0.34, 2.4, 6),
     leaf: new THREE.SphereGeometry(1.6, 9, 7),
     pole: new THREE.CylinderGeometry(0.11, 0.16, 5.6, 6),

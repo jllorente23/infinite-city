@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { BLOCK, CELL, HW_MEDIAN, HW_WIDTH, PALETTE, SIDEWALK, STREET } from './config';
+import { BLOCK, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_COLS, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, SIDEWALK, STREET } from './config';
 import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
 import { cityProps, LAMP_HEAD, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
 import { cityNature, GROUND_KINDS, KERB_KINDS, NatureKind, TREE_KINDS } from './nature';
+import { makeSign, SignKind } from './signs';
 import { cityBuildings, HOUSE_KINDS, MID_KINDS, TOWER_KINDS, BuildingKind } from './buildings';
 import { cloneVehicle, pickHue, VehicleKind } from './vehicles';
 
@@ -108,8 +109,16 @@ function corridorPick(seed: number, v: number, salt: number) {
 export const isHwyCol = (seed: number, i: number) => corridorPick(seed, i, 555);
 export const isHwyRow = (seed: number, j: number) => corridorPick(seed, j, 666);
 
+export function canalAxis(seed: number, i: number, j: number): HighwayAxis | null {
+  const col = isCanalCol(seed, i);
+  const row = isCanalRow(seed, j);
+  if (col && row) return 'both';
+  if (col) return 'z';
+  if (row) return 'x';
+  return null;
+}
+
 export function highwayAxis(seed: number, i: number, j: number): HighwayAxis | null {
-  if (isCanalCol(seed, i) || isCanalRow(seed, j)) return null;
   const col = isHwyCol(seed, i);
   const row = isHwyRow(seed, j);
   if (col && row) return 'both';
@@ -118,12 +127,24 @@ export function highwayAxis(seed: number, i: number, j: number): HighwayAxis | n
   return null;
 }
 
+/** One cell owns each junction so a crossing never gets 16 poles. */
+export function hasSignals(seed: number, jx: number, jz: number) {
+  const nI = Math.round(jx / CELL);
+  const nJ = Math.round(jz / CELL);
+  const cells: [number, number][] = [[nI - 1, nJ - 1], [nI, nJ - 1], [nI - 1, nJ], [nI, nJ]];
+  if (cells.some(([ci, cj]) => highwayAxis(seed, ci, cj) || canalAxis(seed, ci, cj))) return false;
+  const types = cells.map(([ci, cj]) => blockTypeAt(seed, ci, cj));
+  const busy = types.filter((t) => t === 'tower' || t === 'build' || t === 'mall' || t === 'works').length;
+  if (busy < 1) return false;
+  return ((hash3(seed, nI + 17, nJ + 9001) >>> 0) % 100) < 48;
+}
+
 export function blockTypeAt(seed: number, i: number, j: number): BlockType {
   const rnd = mulberry32(hash3(seed, i, j));
   const dens = district(seed, i, j);
   const r = rnd();
-  if (isCanalCol(seed, i) || isCanalRow(seed, j)) return 'canal';
   if (highwayAxis(seed, i, j)) return 'highway';
+  if (canalAxis(seed, i, j)) return 'canal';
   if (isAveA(seed, i, j) || isAveB(seed, i, j)) return 'avenue';
   if (r < 0.06 && dens < 0.62) return 'mall';
   if (r < 0.14 && dens < 0.72) return 'parking';
@@ -225,7 +246,25 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     return m;
   };
 
+  const addWater = (axis: HighwayAxis) => {
+    const wy = hc - 2.75;
+    if (axis === 'x' || axis === 'both') {
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(CELL, CANAL_W), mats.water);
+      w.rotation.x = -Math.PI / 2;
+      w.position.set(cx, wy, cz);
+      group.add(w);
+    }
+    if (axis === 'z' || axis === 'both') {
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(CANAL_W, CELL), mats.water);
+      w.rotation.x = -Math.PI / 2;
+      w.position.set(cx, wy, cz);
+      group.add(w);
+    }
+    boxes.push({ pos: [cx, hc - 2.15, cz], half: [CANAL_W / 2 - 0.4, 0.55, CANAL_W / 2 - 0.4] });
+  };
+
   if (type === 'canal') {
+    const axis = canalAxis(seed, i, j) ?? 'x';
     const f = STREET / 2 / CELL;
     const strips = [
       patch(cx, oz + STREET / 4, CELL, STREET / 2, 0, segs, 1, 0, [0, 1, 1 - f, 1]),
@@ -239,36 +278,38 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       m.receiveShadow = true;
       group.add(m);
     });
-    // All four streets must be in the trimesh. Using only the first strip left
-    // the other three as decoration, and the car fell through them into the basin.
+    if (axis !== 'both') {
+      const alongX = axis === 'z';
+      const br = alongX
+        ? patch(cx, cz, CELL, STREET + 1.2, 0, segs, 2, 0.42)
+        : patch(cx, cz, STREET + 1.2, CELL, 0, 2, segs, 0.42);
+      trash.push(br);
+      const deck = new THREE.Mesh(br, mats.strip);
+      deck.receiveShadow = true;
+      group.add(deck);
+      strips.push(br);
+      if (alongX) {
+        for (const s of [-1, 1]) flat(geos.railX, mats.rail, cx, hc + 0.95, cz + s * (STREET / 2 + 0.35));
+      } else {
+        for (const s of [-1, 1]) flat(geos.railZ, mats.rail, cx + s * (STREET / 2 + 0.35), hc + 0.95, cz);
+      }
+    }
     ground = mergePatches(strips);
     trash.push(ground);
-    const qz1 = oz + STREET / 2, qz2 = oz + CELL - STREET / 2;
-    const qx1 = ox + STREET / 2, qx2 = ox + CELL - STREET / 2;
-    flat(geos.quayX, mats.deck, cx, heightAt(cx, qz1) - 2.1, qz1);
-    flat(geos.quayX, mats.deck, cx, heightAt(cx, qz2) - 2.1, qz2);
-    flat(geos.quayZ, mats.deck, qx1, heightAt(qx1, cz) - 2.1, cz);
-    flat(geos.quayZ, mats.deck, qx2, heightAt(qx2, cz) - 2.1, cz);
-    const lake = new THREE.Mesh(geos.lake, mats.water);
-    lake.rotation.x = -Math.PI / 2;
-    lake.position.set(cx, hc - 2.9, cz);
-    group.add(lake);
-    flat(geos.railX, mats.rail, cx, heightAt(cx, qz1) + 0.6, qz1);
-    flat(geos.railX, mats.rail, cx, heightAt(cx, qz2) + 0.6, qz2);
-    flat(geos.railZ, mats.rail, qx1, heightAt(qx1, cz) + 0.6, cz);
-    flat(geos.railZ, mats.rail, qx2, heightAt(qx2, cz) + 0.6, cz);
-
-    // Quay walls sit on the water side of the kerb so a car hugging the rail
-    // never starts its wheel rays inside a volume. The old basin cube stuck
-    // 1.4 m above the street and killed contact as soon as the hull clipped it.
-    const wall = 0.4;
-    const wallY = 0.9;
-    boxes.push({ pos: [cx, hc + 0.1, cz - BLOCK / 2 + wall], half: [BLOCK / 2, wallY, wall] });
-    boxes.push({ pos: [cx, hc + 0.1, cz + BLOCK / 2 - wall], half: [BLOCK / 2, wallY, wall] });
-    boxes.push({ pos: [cx - BLOCK / 2 + wall, hc + 0.1, cz], half: [wall, wallY, BLOCK / 2] });
-    boxes.push({ pos: [cx + BLOCK / 2 - wall, hc + 0.1, cz], half: [wall, wallY, BLOCK / 2] });
-    // If something does go over, land on the water instead of the void.
-    boxes.push({ pos: [cx, hc - 2.2, cz], half: [BLOCK / 2 - 0.9, 0.7, BLOCK / 2 - 0.9] });
+    addWater(axis);
+    const half = CANAL_W / 2;
+    if (axis === 'x' || axis === 'both') {
+      for (const s of [-1, 1]) {
+        flat(geos.quayX, mats.deck, cx, hc - 2.1, cz + s * half);
+        boxes.push({ pos: [cx, hc + 0.15, cz + s * half], half: [BLOCK / 2, 0.85, 0.28] });
+      }
+    }
+    if (axis === 'z' || axis === 'both') {
+      for (const s of [-1, 1]) {
+        flat(geos.quayZ, mats.deck, cx + s * half, hc - 2.1, cz);
+        boxes.push({ pos: [cx + s * half, hc + 0.15, cz], half: [0.28, 0.85, BLOCK / 2] });
+      }
+    }
   } else if (type === 'highway') {
     const axis = highwayAxis(seed, i, j) ?? 'x';
     const tg = patch(cx, cz, CELL, CELL, 0, segs, segs, 0);
@@ -278,6 +319,29 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
     const tile = new THREE.Mesh(tg, hwyMat);
     tile.receiveShadow = true;
     group.add(tile);
+
+    const waterAxis = canalAxis(seed, i, j);
+    if (waterAxis) {
+      addWater(waterAxis);
+      const half = CANAL_W / 2;
+      if (waterAxis === 'x' || waterAxis === 'both') {
+        for (const s of [-1, 1]) {
+          flat(geos.quayX, mats.deck, cx, hc - 2.1, cz + s * half);
+        }
+      }
+      if (waterAxis === 'z' || waterAxis === 'both') {
+        for (const s of [-1, 1]) {
+          flat(geos.quayZ, mats.deck, cx + s * half, hc - 2.1, cz);
+        }
+      }
+      if (axis !== 'both') {
+        const alongX = axis === 'x';
+        for (const s of [-1, 1]) {
+          if (alongX) flat(geos.railX, mats.rail, cx, hc + 0.95, cz + s * (HW_WIDTH / 2 + 0.4));
+          else flat(geos.railZ, mats.rail, cx + s * (HW_WIDTH / 2 + 0.4), hc + 0.95, cz);
+        }
+      }
+    }
 
     if (axis !== 'both') {
       const alongX = axis === 'x';
@@ -368,6 +432,11 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
   } else if (type === 'parking' || type === 'mall' || type === 'works') {
     const half = inner / 2;
     flat(geos.inner, type === 'works' ? mats.lot : mats.lotFloor, cx, hc - 0.16, cz, 0, true);
+    const lotSkirtG = new THREE.BoxGeometry(inner + 0.4, 3.8, inner + 0.4);
+    trash.push(lotSkirtG);
+    const lotSkirt = new THREE.Mesh(lotSkirtG, mats.under);
+    lotSkirt.position.set(cx, hc - 2.1, cz);
+    group.add(lotSkirt);
     boxes.push({ pos: [cx, hc + 0.04, cz], half: [half, 0.4, half] });
     if (type === 'works') {
       const catalog = cityBuildings();
@@ -456,9 +525,12 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       lotCars.push({ x: cx, z: cz - side * half * 0.45, half: half * 0.75, n: 5 + Math.floor(rnd() * 4), yaw: 0 });
     }
   } else if (type !== 'canal' && type !== 'highway') {
-    if (!far) flat(geos.curb, mats.curb, cx, hc - 0.23, cz);
-    flat(geos.sidewalk, mats.sidewalk, cx, hc - 0.2, cz, 0, true);
-    boxes.push({ pos: [cx, hc - 0.2, cz], half: [BLOCK / 2, 0.5, BLOCK / 2] });
+    if (!far) flat(geos.curb, mats.curb, cx, hc - 1.05, cz);
+    flat(geos.sidewalk, mats.sidewalk, cx, hc - 1.0, cz, 0, true);
+    const skirt = new THREE.Mesh(geos.skirt, mats.under);
+    skirt.position.set(cx, hc - 2.55, cz);
+    group.add(skirt);
+    boxes.push({ pos: [cx, hc - 0.15, cz], half: [BLOCK / 2 - 0.15, 0.55, BLOCK / 2 - 0.15] });
 
     const isGreen = type === 'park' || type === 'plaza';
     if (isGreen) {
@@ -760,78 +832,135 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
       group.add(lampI, bulbI);
     }
 
-    if (type !== 'avenue' && type !== 'highway') {
+    if (type !== 'parking' && type !== 'mall' && type !== 'works' && type !== 'highway') {
+      const inset = BLOCK / 2 - 2.4;
+      for (let k = 0; k < 4; k++) {
+        const sx = k % 2 ? 1 : -1;
+        const sz = k < 2 ? 1 : -1;
+        const px = cx + sx * inset;
+        const pz = cz + sz * inset;
+        if (onDriveable(seed, px, pz, 1.6)) continue;
+        flat(geos.tactile, mats.tactile, px, heightAt(px, pz) + 0.08, pz);
+      }
+      if (type !== 'avenue') {
+        for (let k = 0; k < 3; k++) {
+          const along = (rnd() - 0.5) * (inner - 8);
+          const side = rnd() < 0.5 ? 1 : -1;
+          const onX = rnd() < 0.5;
+          const px = onX ? cx + along : cx + side * (BLOCK / 2 - 5.2);
+          const pz = onX ? cz + side * (BLOCK / 2 - 5.2) : cz + along;
+          if (onDriveable(seed, px, pz, 1.8)) continue;
+          if (k === 0) {
+            flat(geos.bin, mats.metal, px, heightAt(px, pz) + 0.45, pz);
+            boxes.push({ pos: [px, heightAt(px, pz) + 0.45, pz], half: [0.28, 0.45, 0.28] });
+          } else if (k === 1 && (type === 'park' || type === 'plaza' || rnd() < 0.45)) {
+            const ang = onX ? 0 : Math.PI / 2;
+            flat(geos.bench, mats.wood, px, heightAt(px, pz) + 0.42, pz, ang);
+            flat(geos.benchBack, mats.wood, px, heightAt(px, pz) + 0.72, pz, ang);
+          } else {
+            const cover = new THREE.Mesh(geos.manhole, mats.metal);
+            cover.rotation.x = -Math.PI / 2;
+            cover.position.set(px, heightAt(px, pz) + 0.06, pz);
+            group.add(cover);
+          }
+        }
+      }
+    }
+
+    const jx = ox + CELL, jz = oz + CELL;
+    const lit = type !== 'avenue' && type !== 'highway' && hasSignals(seed, jx, jz);
+    if (lit) {
       const housingI = props
         ? new THREE.InstancedMesh(props.signal.geometry, props.signal.material, 4)
         : null;
       if (housingI) { housingI.castShadow = true; group.add(housingI); }
       const lens = new THREE.Vector3();
-      for (let k = 0; k < 4; k++) {
-        const sgn = k % 2 ? 1 : -1;
-        const sgn2 = k < 2 ? 1 : -1;
-        const nodeX = ox + (sgn > 0 ? CELL : 0);
-        const nodeZ = oz + (sgn2 > 0 ? CELL : 0);
-        // Sit on the sidewalk, 0.9 m in from the kerb, so a turning jeep
-        // does not clip the pole in the roadway.
-        const tlx = cx + sgn * (BLOCK / 2 - 0.9);
-        const tlz = cz + sgn2 * (BLOCK / 2 - 0.9);
-        const y = heightAt(tlx, tlz);
-        // face away from the block, towards the traffic this signal governs
-        const yaw = k < 2 ? propYaw(sgn, 0) : propYaw(0, sgn2);
-
+      const approaches = [
+        { x: jx - (STREET / 2 + 0.9), z: jz - (STREET / 2 + 0.9), yaw: propYaw(-1, 0), axisX: true },
+        { x: jx + (STREET / 2 + 0.9), z: jz - (STREET / 2 + 0.9), yaw: propYaw(1, 0), axisX: true },
+        { x: jx - (STREET / 2 + 0.9), z: jz + (STREET / 2 + 0.9), yaw: propYaw(0, -1), axisX: false },
+        { x: jx + (STREET / 2 + 0.9), z: jz + (STREET / 2 + 0.9), yaw: propYaw(0, 1), axisX: false }
+      ];
+      approaches.forEach((ap, k) => {
+        const y = heightAt(ap.x, ap.z);
         let dots: THREE.Mesh[];
         if (housingI) {
           scl.set(1, 1, 1);
-          quat.setFromAxisAngle(UP, yaw);
-          pos.set(tlx, y, tlz);
+          quat.setFromAxisAngle(UP, ap.yaw);
+          pos.set(ap.x, y, ap.z);
           m4.compose(pos, quat, scl);
           housingI.setMatrixAt(k, m4);
           dots = SIGNAL_LENS_Y.map((ly, d) => {
-            lens.set(0, ly, -SIGNAL_LENS_OUT).applyAxisAngle(UP, yaw);
+            lens.set(0, ly, -SIGNAL_LENS_OUT).applyAxisAngle(UP, ap.yaw);
             return flat(
               geos.signalDot,
               [mats.tlRed, mats.tlAmber, mats.tlGreen][d],
-              tlx + lens.x, y + lens.y, tlz + lens.z, yaw
+              ap.x + lens.x, y + lens.y, ap.z + lens.z, ap.yaw
             );
           });
         } else {
-          flat(geos.tlPole, mats.metal, tlx, y + 2.4, tlz, 0, true);
-          flat(geos.tlHead, mats.roof, tlx, y + 5.0, tlz);
+          flat(geos.tlPole, mats.metal, ap.x, y + 2.4, ap.z, 0, true);
+          flat(geos.tlHead, mats.roof, ap.x, y + 5.0, ap.z);
           dots = [
-            flat(geos.tlDot, mats.tlRed, tlx, y + 5.3, tlz - 0.2),
-            flat(geos.tlDot, mats.tlAmber, tlx, y + 5.0, tlz - 0.2),
-            flat(geos.tlDot, mats.tlGreen, tlx, y + 4.7, tlz - 0.2)
+            flat(geos.tlDot, mats.tlRed, ap.x, y + 5.3, ap.z - 0.2),
+            flat(geos.tlDot, mats.tlAmber, ap.x, y + 5.0, ap.z - 0.2),
+            flat(geos.tlDot, mats.tlGreen, ap.x, y + 4.7, ap.z - 0.2)
           ];
         }
-        signals.push({ nx: nodeX, nz: nodeZ, axisX: k < 2, dots });
-        boxes.push({ pos: [tlx, y + 2.4, tlz], half: [0.22, 2.4, 0.22] });
+        signals.push({ nx: jx, nz: jz, axisX: ap.axisX, dots });
+        boxes.push({ pos: [ap.x, y + 2.4, ap.z], half: [0.22, 2.4, 0.22] });
+      });
+    } else if (type !== 'avenue' && type !== 'highway') {
+      const stop = ((hash3(seed, i + 3, j + 11) >>> 0) % 100) < 70;
+      const kind: SignKind = stop ? 'stop' : 'yield';
+      const sx = cx + (BLOCK / 2 - 1.15);
+      const sz = cz + (BLOCK / 2 - 1.15);
+      if (!onDriveable(seed, sx, sz, 1.2)) {
+        const sign = makeSign(kind);
+        sign.position.set(sx, heightAt(sx, sz), sz);
+        sign.rotation.y = propYaw(1, 1);
+        group.add(sign);
+        boxes.push({ pos: [sx, heightAt(sx, sz) + 1.2, sz], half: [0.12, 1.2, 0.12] });
       }
     }
 
-    // parked cars: a few on the kerb, the rest inside lots
-    const parked: { x: number; z: number; yaw: number }[] = [];
-    if (type !== 'avenue' && type !== 'highway') {
-      const sides = [[0, -1], [0, 1], [-1, 0], [1, 0]];
-      for (const s of sides) {
-        if (rnd() < 0.82) continue;
-        const along = (rnd() - 0.5) * (BLOCK - 14);
-        const lane = BLOCK / 2 + 3.4;
-        if (s[0] === 0) parked.push({ x: cx + along, z: cz + s[1] * lane, yaw: Math.PI / 2 });
-        else parked.push({ x: cx + s[0] * lane, z: cz + along, yaw: 0 });
+    {
+      const speedKind: SignKind = type === 'highway' ? 'speed80' : dens > 0.55 ? 'speed50' : 'speed30';
+      if (rnd() < 0.55) {
+        const sx = cx + (rnd() < 0.5 ? 1 : -1) * (BLOCK / 2 - 1.3);
+        const sz = cz + (rnd() < 0.5 ? 1 : -1) * (inner / 2 - 2);
+        if (!onDriveable(seed, sx, sz, 1.3)) {
+          const sign = makeSign(speedKind);
+          sign.position.set(sx, heightAt(sx, sz), sz);
+          sign.rotation.y = propYaw(Math.sign(sx - cx), 0);
+          group.add(sign);
+          boxes.push({ pos: [sx, heightAt(sx, sz) + 1.2, sz], half: [0.12, 1.2, 0.12] });
+        }
       }
     }
+
+    const parked: { x: number; z: number; yaw: number }[] = [];
+    if (type !== 'avenue' && type !== 'highway' && rnd() < 0.22) {
+      const side = rnd() < 0.5 ? 1 : -1;
+      const along = (rnd() - 0.5) * (BLOCK - 16);
+      const kerb = BLOCK / 2 + 3.15;
+      if (rnd() < 0.5) parked.push({ x: cx + along, z: cz + side * kerb, yaw: Math.PI / 2 });
+      else parked.push({ x: cx + side * kerb, z: cz + along, yaw: 0 });
+    }
     for (const lot of lotCars) {
-      const rows = 2;
-      const per = Math.ceil(lot.n / rows);
-      for (let q = 0; q < lot.n; q++) {
-        const rr = Math.floor(q / per), cc = q % per;
-        const offA = (cc - (per - 1) / 2) * 2.7;
-        const offB = (rr - (rows - 1) / 2) * 5.6;
-        const lx = lot.yaw === 0 ? lot.x + offA : lot.x + offB;
-        const lz = lot.yaw === 0 ? lot.z + offB : lot.z + offA;
-        if (Math.abs(lx - lot.x) > lot.half - 2.4 || Math.abs(lz - lot.z) > lot.half - 2.4) continue;
-        if (rnd() < 0.2) continue;
-        parked.push({ x: lx, z: lz, yaw: lot.yaw });
+      const spanA = LOT_COLS * LOT_SLOT_W;
+      const spanB = LOT_ROWS * LOT_SLOT_D + LOT_AISLE;
+      for (let rr = 0; rr < LOT_ROWS; rr++) {
+        for (let cc = 0; cc < LOT_COLS; cc++) {
+          if (rnd() < 0.28) continue;
+          const a = -spanA / 2 + (cc + 0.5) * LOT_SLOT_W;
+          const rowZ = rr === 0 ? -spanB / 2 + LOT_SLOT_D / 2 : spanB / 2 - LOT_SLOT_D / 2;
+          const lx = lot.yaw === 0 ? lot.x + a : lot.x + rowZ;
+          const lz = lot.yaw === 0 ? lot.z + rowZ : lot.z + a;
+          if (Math.abs(lx - lot.x) > lot.half - 2.1 || Math.abs(lz - lot.z) > lot.half - 2.1) continue;
+          const yaw = lot.yaw === 0 ? (rr === 0 ? 0 : Math.PI) : (rr === 0 ? -Math.PI / 2 : Math.PI / 2);
+          parked.push({ x: lx, z: lz, yaw });
+        }
       }
     }
     for (const pk of parked) {

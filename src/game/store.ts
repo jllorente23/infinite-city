@@ -24,7 +24,7 @@ type GameState = {
 
 export const useGame = create<GameState>((set) => ({
   seed: 7,
-  quality: typeof window !== 'undefined' && 'ontouchstart' in window ? 'low' : 'high',
+  quality: 'high',
   speed: 0,
   score: 0,
   distance: 0,

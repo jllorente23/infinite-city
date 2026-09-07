@@ -11,6 +11,13 @@ export const HW_SHOULDER = 2.4;
 export const HW_WIDTH = HW_LANE * 4 + HW_MEDIAN + HW_SHOULDER * 2;
 export const HW_INNER = HW_MEDIAN / 2 + HW_LANE / 2;
 export const HW_OUTER = HW_MEDIAN / 2 + HW_LANE * 1.5;
+export const CANAL_W = 16;
+export const CORNER_R = 3.4;
+export const LOT_COLS = 8;
+export const LOT_ROWS = 2;
+export const LOT_SLOT_W = 2.55;
+export const LOT_SLOT_D = 5.1;
+export const LOT_AISLE = 5.8;
 
 export const QUALITY = {
   high: { loadRadius: 8, detailRadius: 2, midRadius: 5, shadows: true, dpr: 2, traffic: 24, clouds: true },

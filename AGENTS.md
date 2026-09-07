@@ -27,6 +27,8 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 | `src/game/DayNight.tsx` | Cielo, farolas, exposición |
 | `src/game/textures.ts` | Asfalto, marcas, materiales (sin SSR) |
 | `src/game/nature.ts` / `buildings.ts` / `carModels.ts` / `props.ts` | GLB horneados |
+| `src/game/signs.ts` | Señales STOP / CEDA / velocidad |
+| `src/game/Sparks.tsx` | Chispas al chocar tráfico |
 
 ## Convenciones que no rompas
 
@@ -35,7 +37,11 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 - **No vuelvas a poner SSR / EffectComposer.** El temporal resolve deja rastros al andar. El asfalto es `MeshStandardMaterial` mate, no `MeshPhysical` con envMap/clearcoat.
 - Faroles: no “se prenden al llegar”. Reasigna luces con fade, no un snap de intensidad.
 - Tráfico: no recicles un auto que el jugador todavía ve. En solape, frena; no teletransportes.
-- Semáforos: lentes redondas, ciclo largo (verde / ámbar / todo rojo). Polos en la acera, no en la trayectoria de giro.
+- Semáforos: lentes redondas, ciclo largo (verde / ámbar / todo rojo). **Un cruce, un dueño** (`hasSignals` en la esquina SE de la manzana). No 4 postes por esquina. Autopista y canal no llevan semáforo; el resto usa STOP/CEDA.
+- Andenes: losa redondeada (`roundedSlab`) y falda oscura debajo para que no se vea el cielo en pendientes.
+- Controles táctiles solo en touch. En desktop, teclado. Calidad por defecto: `high` también en móvil.
+- Reloj estilo GTA en `Hud` (el día dura `DAY_SECONDS`).
+- Estacionamiento: autos alineados a `LOT_COLS` × `LOT_ROWS`, misma grilla que `lotTexture`.
 - LOD lejano: siluetas neutras (`mats.distant`), no grilla de ventanas que desaparece al acercarte.
 - GLB: al convertir, el JSON del GLB se rellena con **espacios**, nunca null bytes (`JSON.parse` revienta).
 - Kit Kenney de autos: quita mallas cuyo nombre incluye `wheel`; las ruedas las pone Rapier. El jeep lleva la de repuesto a mano.
@@ -44,12 +50,12 @@ Entrada: `src/components/Game.tsx`. Núcleo en `src/game/`.
 
 `canal` | `highway` | `avenue` | `mall` | `parking` | `works` | `tower` | `build` | `park` | `plaza` | `low`
 
-- Autopista: corredor continuo (`isHwyCol` / `isHwyRow`), 2+2 carriles, mediana, jersey. Tráfico más rápido, sin semáforo.
+- Autopista **gana** al canal: el agua pasa por debajo y el tablero sigue. Canal solo = cauce + puente a mitad de manzana. El tráfico de autopista no debe flotar sobre el agua.
 - Semilla `18`: autopista norte-sur al nacer. Semilla `7` (default): la más cercana ~125 m al oeste.
 
 ## Fallos que el usuario ya reportó
 
-Noche oscura / faros apagados, luces que parpadean, árboles blancos o en el pavimento, autos que se atraviesan o flotan en pendiente, jeep que cae infinito, llantas con parche blanco, semáforos cuadrados o en RGB sin pausa, LOD de edificios que “cambia de modelo”, SSR con fantasmas, arbustos a mitad de calle, vibración en móvil.
+Noche oscura / faros apagados, luces que parpadean, árboles blancos o en el pavimento, autos que se atraviesan o flotan en pendiente, jeep que cae infinito, llantas con parche blanco, semáforos cuadrados o en RGB sin pausa, LOD de edificios que “cambia de modelo”, SSR con fantasmas, arbustos a mitad de calle, vibración en móvil, autopista cortada por “espejos” de agua, semáforos de más, luz por debajo del andén, parkings que no coinciden con los autos.
 
 Antes de dar por cerrado un look, conduce de verdad: de día y de noche, cuesta, cruce, autopista.
 

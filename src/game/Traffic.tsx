@@ -159,6 +159,17 @@ export function Traffic() {
   );
 }
 
+/** Contact test for sparks: anyone close enough to the jeep's hull. */
+export function trafficHit(x: number, z: number, radius: number) {
+  for (const other of agents) {
+    if (!other.live) continue;
+    agentWorld(other, _other);
+    const d = Math.hypot(_other.x - x, _other.z - z);
+    if (d < radius + other.len * 0.45) return { x: _other.x, z: _other.z, d };
+  }
+  return null;
+}
+
 function agentWorld(a: Agent, out: { x: number; z: number }) {
   if (a.arc) {
     bezier2(_pos, a.arc.p0, a.arc.p1, a.arc.p2, a.arc.t);

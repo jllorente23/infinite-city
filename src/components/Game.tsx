@@ -8,6 +8,7 @@ import { City } from '@/game/City';
 import { Car } from '@/game/Car';
 import { Traffic } from '@/game/Traffic';
 import { DayNight } from '@/game/DayNight';
+import { Sparks } from '@/game/Sparks';
 import { SKY_RADIUS } from '@/game/config';
 import { qualityOf, useGame } from '@/game/store';
 import { Hud } from './Hud';
@@ -48,6 +49,7 @@ export default function Game() {
             <City />
             <Car />
             <Traffic />
+            <Sparks />
           </Physics>
         </Suspense>
       </Canvas>
@@ -68,7 +70,8 @@ export default function Game() {
           </button>
           <p>
             La ciudad se construye por manzanas alrededor del carro y se descarta lo que queda lejos.
-            La misma semilla siempre reconstruye la misma ciudad.
+            La misma semilla siempre reconstruye la misma ciudad. El reloj corre más rápido que la
+            vida real: un día entero dura unos cuatro minutos.
           </p>
         </div>
       )}

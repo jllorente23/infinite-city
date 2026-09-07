@@ -10,6 +10,8 @@ import { controls, playerPos, useGame } from './store';
 import { CELL } from './config';
 import { heightAt, isInsideBlock } from './rng';
 import { blockTypeAt } from './city';
+import { burstSparks } from './Sparks';
+import { trafficHit } from './Traffic';
 
 const MASS = 1150;
 const ENGINE = 3400;
@@ -102,6 +104,7 @@ export function Car() {
   const lookAtPos = useRef(new THREE.Vector3(0, 1.2, -5));
   const spin = useRef(0);
   const flipped = useRef(0);
+  const sparkCd = useRef(0);
 
   useEffect(() => {
     if (!body.current) return;
@@ -218,6 +221,15 @@ export function Car() {
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
       rb.setAngvel({ x: 0, y: 0, z: 0 }, true);
       flipped.current = 0;
+    }
+
+    sparkCd.current -= delta;
+    if (sparkCd.current <= 0 && Math.abs(speed) > 3.2) {
+      const hit = trafficHit(t.x, t.z, spec.L * 0.46 + 0.55);
+      if (hit) {
+        burstSparks(t.x, t.y + 0.38, t.z, fwd.x * speed, fwd.z * speed);
+        sparkCd.current = 0.09;
+      }
     }
 
     playerPos.x = t.x; playerPos.y = t.y; playerPos.z = t.z;
