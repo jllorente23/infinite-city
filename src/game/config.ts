@@ -32,6 +32,9 @@ export const BRIDGE_RISE = 1.5;
 /** One crossing every this many blocks along a canal. */
 export const BRIDGE_EVERY = 2;
 export const CORNER_R = 3.4;
+/** How far a Kenney road tile floats over the terrain it is draped on. */
+export const ROAD_TILE_LIFT = 0.09;
+
 export const LOT_COLS = 12;
 export const LOT_ROWS = 2;
 export const LOT_BANDS = 2;

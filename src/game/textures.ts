@@ -72,31 +72,11 @@ function tileTexture(plain: boolean) {
     g.fillStyle = '#8b9095'; g.fillRect(a - 0.9 * s, a - 0.9 * s, b - a + 1.8 * s, b - a + 1.8 * s);
     g.fillStyle = '#b7bcc0'; g.fillRect(a, a, b - a, b - a);
   }
-  // Centreline. A cell only paints its two low edges, a half-open interval, so
-  // neighbouring cells never lay a second line over the same stretch of road.
-  // Each dash run also stops at the junction box, which is what used to leave a
-  // yellow cross painted across the middle of every intersection.
-  const lane = 0.32 * s, dash = 3 * s;
-  g.fillStyle = '#e6d28e';
-  for (let d = a; d < b; d += dash * 2) {
-    const run = Math.min(dash, b - d);
-    g.fillRect(d, 0, run, lane);
-    g.fillRect(0, d, lane, run);
-  }
-
-  // Zebras. Four cells meet at every junction and each paints the half of the
-  // crossing that lands inside its own square, so the four approaches come out
-  // whole and drawn exactly once.
-  g.fillStyle = '#dedcd4';
-  const stripe = 0.85 * s, gap = 0.75 * s, len = 2.4 * s;
-  for (const [jx, jz] of [[0, 0], [px, 0], [0, px], [px, px]]) {
-    for (let m = -a + gap; m < a - gap; m += stripe + gap) {
-      g.fillRect(jx + m, jz - a - len, stripe, len);
-      g.fillRect(jx + m, jz + a, stripe, len);
-      g.fillRect(jx - a - len, jz + m, len, stripe);
-      g.fillRect(jx + a, jz + m, len, stripe);
-    }
-  }
+  // No lane markings or zebras are painted here. The Kenney road tiles carry
+  // every marking, and a painted road underneath them only fought for the same
+  // pixels: the tiles ended up showing as thin strips along the kerbs while the
+  // paint won the middle of the street. What is left is the bare asphalt that
+  // the tiles sit on and that distant cells, which get no tiles, fall back to.
   return finish(c);
 }
 

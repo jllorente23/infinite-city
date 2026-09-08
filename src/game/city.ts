@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_BANDS, LOT_COLS, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, ROAD_TILE, ROAD_TILES_PER_EDGE, SIDEWALK, STREET } from './config';
+import { BLOCK, BRIDGE_DECK_W, BRIDGE_EVERY, BRIDGE_RAMP, BRIDGE_RISE, BRIDGE_SPAN, CANAL_W, CELL, HW_MEDIAN, HW_WIDTH, LOT_AISLE, LOT_BANDS, LOT_COLS, LOT_ROWS, LOT_SLOT_D, LOT_SLOT_W, PALETTE, ROAD_TILE, ROAD_TILE_LIFT, ROAD_TILES_PER_EDGE, SIDEWALK, STREET } from './config';
 import { hash3, heightAt, mulberry32 } from './rng';
 import { buildingGeo, createAssets, mergeBoxes } from './textures';
 import { BRIDGE_KERB, BRIDGE_SLAB, BRIDGE_TOP, cityProps, LAMP_HEAD, PILLAR_TOP, propYaw, SIGNAL_LENS_OUT, SIGNAL_LENS_Y } from './props';
@@ -1072,7 +1072,10 @@ export function generateChunk(seed: number, i: number, j: number, lod: number): 
         nrm.set(-gx, 1, -gz).normalize();
         tilt.setFromUnitVectors(UP, nrm);
         q.setFromAxisAngle(UP, yaw).premultiply(tilt);
-        at.set(tx, heightAt(tx, tz) + 0.02, tz);
+        // The ground mesh only samples `heightAt` at its grid corners, so it
+        // bulges a few centimetres above it mid-quad. A 2 cm lift let those
+        // bulges swallow the tile everywhere except along the cell edges.
+        at.set(tx, heightAt(tx, tz) + ROAD_TILE_LIFT, tz);
         place[kind].push(new THREE.Matrix4().compose(at, q, one));
       };
 

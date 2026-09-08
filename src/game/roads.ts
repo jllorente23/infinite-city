@@ -22,8 +22,14 @@ const URLS: Record<RoadKind, string> = {
   crossroadPath: `${DIR}road-crossroad-path.glb`
 };
 
-/** Height of the tile's top face in the source model. */
-const SURFACE = 0.02;
+/**
+ * Height of the *driving surface* in the source model. The tile is 0.02 tall
+ * overall, but that top level is the raised verge running down either side;
+ * the asphalt sits at 0.01 and spans the middle 80% of the tile. Baking against
+ * the bounding box top instead put the verges on the road and sank the asphalt
+ * 14 cm into the terrain, so all a tile ever showed was two strips at the kerb.
+ */
+const SURFACE = 0.01;
 
 export type RoadMesh = { geometry: THREE.BufferGeometry; material: THREE.Material };
 export type CityRoads = Record<RoadKind, RoadMesh>;
